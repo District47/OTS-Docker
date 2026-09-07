@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# Defaults for the config templates, so nginx still starts if compose did not
+# pass one of these through. Sourced by the nginx entrypoint.
+set -e
+
+export OTS_ADDRESS="${OTS_ADDRESS:-opentakserver:8081}"
+export MTX_ADDRESS="${MTX_ADDRESS:-mediamtx}"
+export OTS_FQDN="${OTS_FQDN:-_}"
+export OTS_TLS_MODE="${OTS_TLS_MODE:-self-signed}"
+export CLIENT_MAX_BODY_SIZE="${CLIENT_MAX_BODY_SIZE:-512M}"

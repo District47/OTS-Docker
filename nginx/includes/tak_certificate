@@ -1,0 +1,16 @@
+# ============================================================================
+#  Certificates for the TAK-facing listeners (8443, 8446, 8883).
+#
+#  These ALWAYS use the OpenTAKServer CA, never Let's Encrypt: TAK clients
+#  authenticate with client certificates issued by this CA, so the server
+#  side of the handshake has to belong to the same PKI.
+#
+#  Created automatically by OpenTAKServer on first start.
+# ============================================================================
+
+# CA used to verify client certificates
+ssl_client_certificate  /app/ots/ca/ca.pem;
+
+# OpenTAKServer server certificate
+ssl_certificate         /app/ots/ca/certs/opentakserver/opentakserver.pem;
+ssl_certificate_key     /app/ots/ca/certs/opentakserver/opentakserver.nopass.key;

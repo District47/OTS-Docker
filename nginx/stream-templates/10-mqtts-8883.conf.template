@@ -1,0 +1,15 @@
+#******************************************************
+#   MQTT over TLS  ->  RabbitMQ
+#   Port: 8883
+#
+#   Used by Meshtastic and other MQTT clients. TLS is terminated here and
+#   forwarded to RabbitMQ's plain MQTT listener on 1883, which is never
+#   published outside the Docker network.
+#******************************************************
+server {
+    listen 8883 ssl;
+
+    include includes.d/tak_certificate;
+
+    proxy_pass rabbitmq:1883;
+}

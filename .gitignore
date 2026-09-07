@@ -1,0 +1,17 @@
+# Local configuration containing generated secrets - never commit this.
+.env
+
+# Certbot/Let's Encrypt material if it is ever bind-mounted locally.
+letsencrypt/
+
+# Backups produced by ots.ps1 backup
+backups/
+
+# CA certificate exported by ots.ps1 ca-export
+ca.pem
+
+# Editor / OS noise
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

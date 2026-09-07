@@ -1,0 +1,15 @@
+# Everything in this repo is consumed by Linux containers.
+# Force LF so Windows checkouts don't break shell scripts or nginx configs.
+* text=auto eol=lf
+
+# Run by Windows, not by the containers - these need CRLF.
+# cmd.exe in particular can mis-parse batch files with LF endings.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Never touch binaries.
+*.png binary
+*.jpg binary
+*.zip binary
+*.p12 binary

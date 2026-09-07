@@ -1,0 +1,44 @@
+#******************************************************
+#   Marti API - HTTPS with client certificates
+#   Port: 8443
+#
+#   This is the port ATAK/WinTAK/iTAK use once they hold a client
+#   certificate. nginx verifies the certificate against the OpenTAKServer CA
+#   and forwards it to the application, which uses it to identify the client.
+#******************************************************
+server {
+    # Deliberately HTTP/1.1 only: TAK clients speak HTTP/1.1, and mixing
+    # HTTP/2 with client-certificate auth buys nothing but risk here.
+    listen 8443 ssl;
+    server_name ${OTS_FQDN};
+
+    resolver 127.0.0.11 valid=10s;
+    resolver_timeout 5s;
+
+    set $upstream_ots ${OTS_ADDRESS};
+
+    client_max_body_size ${CLIENT_MAX_BODY_SIZE};
+
+    include includes.d/tak_certificate;
+
+    # Reject anyone without a certificate signed by the OpenTAKServer CA.
+    ssl_verify_client on;
+
+    # Enrollment is not allowed here - you cannot have a certificate yet.
+    location /Marti/api/tls {
+        return 404;
+    }
+
+    location /Marti {
+        include includes.d/proxy_params;
+        proxy_http_version 1.1;
+
+        # OpenTAKServer reads the client certificate from this header and
+        # verifies it against its CA. The "escaped" variant is URL-encoded,
+        # which is what the application expects - a raw PEM would be an
+        # invalid multi-line header value.
+        proxy_set_header X-Ssl-Cert $ssl_client_escaped_cert;
+
+        proxy_pass http://$upstream_ots;
+    }
+}

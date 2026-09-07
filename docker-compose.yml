@@ -1,0 +1,405 @@
+# ============================================================================
+#  OpenTAKServer - Docker Compose stack for Windows
+#
+#  Start with:  .\ots.ps1 start      (or: docker compose up -d)
+#  All tunable values live in .env - run setup.ps1 to generate one.
+# ============================================================================
+name: opentakserver
+
+# ---------------------------------------------------------------------------
+# Shared environment for every OpenTAKServer process (app, parser, handlers).
+# These are read only on FIRST start, then persisted to config.yml.
+# ---------------------------------------------------------------------------
+x-ots-env: &ots-env
+  SQLALCHEMY_DATABASE_URI: "postgresql+psycopg://${POSTGRES_USER:-ots}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set - run setup.ps1 or copy .env.example to .env}@ots-db/${POSTGRES_DB:-ots}"
+  # Deliberately an IP address, not the "rabbitmq" hostname. OpenTAKServer
+  # authorises RabbitMQ's auth callbacks by comparing the caller's source IP
+  # against this value, so a hostname here would reject every MQTT login.
+  OTS_RABBITMQ_SERVER_ADDRESS: ${OTS_RABBITMQ_IP:-172.28.0.10}
+  OTS_RABBITMQ_USERNAME: ${RABBITMQ_USER:-ots}
+  OTS_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is not set - run setup.ps1 or copy .env.example to .env}
+  OTS_MEDIAMTX_API_ADDRESS: http://mediamtx:9997
+  OTS_LISTENER_ADDRESS: 0.0.0.0
+  OTS_STREAMING_INTERFACE: 0.0.0.0
+  OTS_CA_PASSWORD: ${OTS_CA_PASSWORD:-atakatak}
+  OTS_CA_NAME: ${OTS_CA_NAME:-OpenTAKServer-CA}
+  OTS_TCP_STREAMING_PORT: ${OTS_TCP_COT_PORT:-8088}
+  OTS_SSL_STREAMING_PORT: ${OTS_SSL_COT_PORT:-8089}
+  OTS_UDP_PORT: ${OTS_UDP_COT_PORT:-8087}
+  OTS_MARTI_HTTP_PORT: ${OTS_MARTI_HTTP_PORT:-8080}
+  OTS_MARTI_HTTPS_PORT: ${OTS_MARTI_HTTPS_PORT:-8443}
+  TZ: ${TZ:-UTC}
+
+x-ots-image: &ots-image "ghcr.io/brian7704/opentakserver:${OTS_VERSION:-1.7.13}"
+
+services:
+
+  # -------------------------------------------------------------------------
+  # One-shot initialiser. Everything else waits for it to exit successfully.
+  #
+  # It does three things:
+  #
+  #  1. SECURITY: discards the certificate authority that ships inside the
+  #     published image. That image contains ca-do-not-share.key, encrypted
+  #     with the well-known default password, so every deployment that keeps
+  #     it shares one CA private key - and anyone who pulls the public image
+  #     could mint client certificates your server would trust. Deleting it
+  #     on first run forces OpenTAKServer to generate a CA unique to you.
+  #
+  #  2. Fixes ownership: an empty named volume is created root-owned, but
+  #     OpenTAKServer runs as the unprivileged "ots" user and has to write
+  #     its CA, config.yml and logs there.
+  #
+  #  3. Seeds the MediaMTX config, which OpenTAKServer later rewrites in
+  #     place to inject its webhook token.
+  #
+  # The marker file makes step 1 first-run-only. Wiping the CA on every
+  # restart would invalidate every client certificate already issued.
+  # -------------------------------------------------------------------------
+  ots-init:
+    image: *ots-image
+    container_name: ots-init
+    user: root
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        if [ ! -f /app/ots/.ots-initialized ]; then
+          echo "First run: discarding the certificate authority baked into the image."
+          echo "OpenTAKServer will generate a new, unique CA on startup."
+          rm -rf /app/ots/ca /app/ots/logs
+        fi
+        mkdir -p /app/ots/mediamtx/recordings /app/ots/ca /app/ots/logs
+        if [ ! -f /app/ots/mediamtx/mediamtx.yml ]; then
+          echo "Seeding mediamtx.yml"
+          cp /seed/mediamtx.yml /app/ots/mediamtx/mediamtx.yml
+        fi
+        touch /app/ots/.ots-initialized
+        chown -R ots:ots /app/ots
+        echo "Initialisation complete."
+    volumes:
+      - ots_data:/app/ots
+      - ./config/mediamtx/mediamtx.yml:/seed/mediamtx.yml:ro
+    restart: "no"
+
+  # -------------------------------------------------------------------------
+  # OpenTAKServer - the main application and REST API.
+  # Creates the CA and runs database migrations automatically on startup.
+  # -------------------------------------------------------------------------
+  ots:
+    image: *ots-image
+    container_name: opentakserver
+    hostname: opentakserver
+    restart: unless-stopped
+    tty: true
+    environment: *ots-env
+    volumes:
+      - ots_data:/app/ots
+    networks:
+      default:
+        aliases: [opentakserver]
+    depends_on:
+      ots-init:
+        condition: service_completed_successfully
+      ots-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8081/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
+  # -------------------------------------------------------------------------
+  # Parses incoming Cursor-on-Target messages off the RabbitMQ queue.
+  # -------------------------------------------------------------------------
+  ots_cot_parser:
+    image: "ghcr.io/brian7704/ots_cot_parser:${OTS_VERSION:-1.7.13}"
+    container_name: ots-cot-parser
+    hostname: ots-cot-parser
+    restart: unless-stopped
+    tty: true
+    command: python3 /app/venv/bin/cot_parser
+    environment: *ots-env
+    volumes:
+      - ots_data:/app/ots
+    healthcheck:
+      disable: true
+    depends_on:
+      ots:
+        condition: service_healthy
+
+  # -------------------------------------------------------------------------
+  # CoT streaming over plain TCP (no certificate required).
+  # -------------------------------------------------------------------------
+  ots_eud_handler:
+    image: "ghcr.io/brian7704/ots_eud_handler:${OTS_VERSION:-1.7.13}"
+    container_name: ots-eud-handler
+    hostname: ots-eud-handler
+    restart: unless-stopped
+    tty: true
+    command: python3 /app/venv/bin/eud_handler
+    environment: *ots-env
+    ports:
+      - "${OTS_PLAINTEXT_BIND:-0.0.0.0}:${OTS_TCP_COT_PORT:-8088}:8088"
+    volumes:
+      - ots_data:/app/ots
+    healthcheck:
+      disable: true
+    depends_on:
+      ots:
+        condition: service_healthy
+
+  # -------------------------------------------------------------------------
+  # CoT streaming over TLS with client certificates. This is what ATAK,
+  # WinTAK and iTAK use for an authenticated connection.
+  # -------------------------------------------------------------------------
+  ots_eud_handler_ssl:
+    image: "ghcr.io/brian7704/ots_eud_handler_ssl:${OTS_VERSION:-1.7.13}"
+    container_name: ots-eud-handler-ssl
+    hostname: ots-eud-handler-ssl
+    restart: unless-stopped
+    tty: true
+    command: python3 /app/venv/bin/eud_handler --ssl
+    environment: *ots-env
+    ports:
+      - "${OTS_SSL_COT_PORT:-8089}:8089"
+    volumes:
+      - ots_data:/app/ots
+    healthcheck:
+      disable: true
+    depends_on:
+      ots:
+        condition: service_healthy
+
+  # -------------------------------------------------------------------------
+  # CoT over UDP. Needs its own process because the handler binds one
+  # protocol per instance.
+  #
+  # DISABLED BY DEFAULT. The --udp flag exists in the OpenTAKServer source but
+  # is NOT present in the published 1.7.13 image, which rejects it with
+  # "unrecognized arguments: --udp" and crash-loops. Enable it only with an
+  # image that supports the flag:
+  #
+  #     docker compose --profile udp up -d
+  #
+  # Most TAK clients use the SSL streaming port (8089) anyway.
+  # -------------------------------------------------------------------------
+  ots_eud_handler_udp:
+    image: "ghcr.io/brian7704/ots_eud_handler:${OTS_VERSION:-1.7.13}"
+    container_name: ots-eud-handler-udp
+    hostname: ots-eud-handler-udp
+    profiles: ["udp"]
+    restart: unless-stopped
+    tty: true
+    command: python3 /app/venv/bin/eud_handler --udp
+    environment: *ots-env
+    ports:
+      - "${OTS_UDP_COT_PORT:-8087}:8087/udp"
+    volumes:
+      - ots_data:/app/ots
+    healthcheck:
+      disable: true
+    depends_on:
+      ots:
+        condition: service_healthy
+
+  # -------------------------------------------------------------------------
+  # nginx: serves the web UI and terminates TLS for every TAK-facing port.
+  # Built locally on top of the published UI image so the config templates
+  # and entrypoint scripts are baked in with correct permissions.
+  # -------------------------------------------------------------------------
+  nginx:
+    build:
+      context: ./nginx
+      args:
+        OTS_UI_VERSION: ${OTS_UI_VERSION:-master}
+    image: ots-nginx:local
+    container_name: ots-nginx
+    hostname: ots-nginx
+    restart: unless-stopped
+    environment:
+      OTS_FQDN: ${OTS_FQDN:-_}
+      OTS_TLS_MODE: ${OTS_TLS_MODE:-self-signed}
+      OTS_NGINX_RELOAD_INTERVAL: ${OTS_NGINX_RELOAD_INTERVAL:-21600}
+      CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-512M}
+      OTS_ADDRESS: opentakserver:8081
+      MTX_ADDRESS: mediamtx
+      TZ: ${TZ:-UTC}
+    ports:
+      - "${OTS_HTTP_PORT:-80}:80"
+      - "${OTS_HTTPS_PORT:-443}:443"
+      - "${OTS_PLAINTEXT_BIND:-0.0.0.0}:${OTS_MARTI_HTTP_PORT:-8080}:8080"
+      - "${OTS_MARTI_HTTPS_PORT:-8443}:8443"
+      - "${OTS_CERT_ENROLLMENT_PORT:-8446}:8446"
+      - "${OTS_MQTT_PORT:-8883}:8883"
+    volumes:
+      # Read-only: nginx only needs to read the CA that OpenTAKServer created.
+      - ots_data:/app/ots:ro
+      - letsencrypt_certs:/etc/letsencrypt
+      - letsencrypt_www:/var/www/certbot
+    depends_on:
+      ots:
+        condition: service_healthy
+
+  # -------------------------------------------------------------------------
+  # PostgreSQL + PostGIS.
+  #
+  # Uses a named volume, NOT a bind mount: PostgreSQL cannot run on a Windows
+  # bind mount because it requires POSIX ownership on its data directory.
+  # -------------------------------------------------------------------------
+  ots-db:
+    image: postgis/postgis:18-3.6
+    container_name: ots-db
+    hostname: ots-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ots}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set}
+      POSTGRES_DB: ${POSTGRES_DB:-ots}
+      PGUSER: ${POSTGRES_USER:-ots}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ots_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d ${POSTGRES_DB:-ots}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  # -------------------------------------------------------------------------
+  # RabbitMQ - message bus, and the MQTT broker for Meshtastic.
+  # Authentication is delegated back to OpenTAKServer over HTTP.
+  # -------------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:4
+    container_name: ots-rabbitmq
+    hostname: rabbitmq
+    restart: unless-stopped
+    environment:
+      # A named user rather than "guest": RabbitMQ only lets guest connect
+      # over loopback, which never applies between containers.
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-ots}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is not set}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./config/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ./config/rabbitmq/99-opentakserver.conf:/etc/rabbitmq/conf.d/99-opentakserver.conf:ro
+      - ots_rabbitmq:/var/lib/rabbitmq
+    networks:
+      default:
+        aliases: [rabbitmq]
+        ipv4_address: ${OTS_RABBITMQ_IP:-172.28.0.10}
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 15s
+      timeout: 20s
+      retries: 10
+      start_period: 60s
+
+  # -------------------------------------------------------------------------
+  # MediaMTX - video streaming (RTSP/RTMP/HLS/WebRTC/SRT).
+  #
+  # Reads its config from the shared volume because OpenTAKServer rewrites
+  # that file on startup to inject the webhook API token.
+  # -------------------------------------------------------------------------
+  mediamtx:
+    image: bluenviron/mediamtx:1.13.0-ffmpeg
+    container_name: ots-mediamtx
+    hostname: mediamtx
+    restart: unless-stopped
+    command: ["/app/ots/mediamtx/mediamtx.yml"]
+    environment:
+      TZ: ${TZ:-UTC}
+    ports:
+      - "${OTS_VIDEO_PLAINTEXT_BIND:-0.0.0.0}:${VIDEO_RTMP_PORT:-1935}:1935"
+      - "${VIDEO_RTMPS_PORT:-1936}:1936"
+      - "${VIDEO_RTP_PORT:-8000}:8000/udp"
+      - "${VIDEO_RTCP_PORT:-8001}:8001/udp"
+      # Encrypted RTSPS carries media over SRTP on a separate pair of ports.
+      # Without these, video over RTSPS+UDP fails from outside the host - and
+      # in TLS-only mode 8000/8001 are the ones sitting idle.
+      - "${VIDEO_SRTP_PORT:-8004}:8004/udp"
+      - "${VIDEO_SRTCP_PORT:-8005}:8005/udp"
+      - "${VIDEO_WEBRTC_UDP_PORT:-8189}:8189/udp"
+      - "${VIDEO_RTSPS_PORT:-8322}:8322"
+      - "${OTS_VIDEO_PLAINTEXT_BIND:-0.0.0.0}:${VIDEO_RTSP_PORT:-8554}:8554"
+      - "${OTS_VIDEO_PLAINTEXT_BIND:-0.0.0.0}:${VIDEO_HLS_PORT:-8888}:8888"
+      - "${OTS_VIDEO_PLAINTEXT_BIND:-0.0.0.0}:${VIDEO_WEBRTC_PORT:-8889}:8889"
+      - "${VIDEO_SRT_PORT:-8890}:8890/udp"
+    volumes:
+      - ots_data:/app/ots
+    networks:
+      default:
+        aliases: [mediamtx]
+    depends_on:
+      ots:
+        condition: service_healthy
+
+  # -------------------------------------------------------------------------
+  # Let's Encrypt renewal loop.
+  #
+  # Part of the "public" profile - only runs on an internet-facing install.
+  # Set the whole thing up with:  .\ots.ps1 go-public
+  #
+  # nginx picks up renewed certificates on its own: it reloads periodically
+  # (see nginx/docker-entrypoint.d/90-periodic-reload.sh), because certbot
+  # in a separate container has no way to signal it.
+  # -------------------------------------------------------------------------
+  certbot:
+    image: certbot/certbot:latest
+    container_name: ots-certbot
+    profiles: ["public"]
+    restart: unless-stopped
+    volumes:
+      - letsencrypt_certs:/etc/letsencrypt
+      - letsencrypt_www:/var/www/certbot
+    entrypoint: >
+      /bin/sh -c "trap exit TERM;
+      while :; do
+        certbot renew --webroot -w /var/www/certbot --quiet;
+        sleep 12h & wait $${!};
+      done"
+
+  # -------------------------------------------------------------------------
+  # Dynamic DNS: keeps your DuckDNS hostname pointed at your current public IP.
+  #
+  # Home connections get a new IP whenever the ISP feels like it, which would
+  # otherwise silently break every TAK client and stop certificate renewal.
+  # Part of the "public" profile.
+  # -------------------------------------------------------------------------
+  duckdns:
+    image: linuxserver/duckdns:latest
+    container_name: ots-duckdns
+    profiles: ["public"]
+    restart: unless-stopped
+    environment:
+      # Deliberately optional rather than required (${VAR:?}): Compose
+      # interpolates every service in the file even when its profile is
+      # inactive, so demanding these would break plain LAN installs.
+      # 'go-public' validates them against DuckDNS before writing them.
+      SUBDOMAINS: ${DUCKDNS_SUBDOMAIN:-}
+      TOKEN: ${DUCKDNS_TOKEN:-}
+      UPDATE_IP: ipv4
+      LOG_FILE: "false"
+      TZ: ${TZ:-UTC}
+
+volumes:
+  ots_data:
+  ots_pgdata:
+  ots_rabbitmq:
+  letsencrypt_certs:
+  letsencrypt_www:
+
+networks:
+  default:
+    name: opentakserver
+    # A fixed subnet so RabbitMQ can have a predictable address. Change
+    # OTS_NETWORK_SUBNET / OTS_RABBITMQ_IP in .env if this collides with an
+    # existing Docker network or your LAN.
+    ipam:
+      config:
+        - subnet: ${OTS_NETWORK_SUBNET:-172.28.0.0/16}

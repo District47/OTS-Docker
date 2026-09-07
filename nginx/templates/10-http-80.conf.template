@@ -1,0 +1,32 @@
+#******************************************************
+#   Web UI - HTTP
+#   Port: 80
+#
+#   Serves the ACME challenge and the health endpoint, and redirects
+#   everything else to HTTPS.
+#******************************************************
+server {
+    listen 80 default_server;
+    server_name _;
+    root /usr/share/nginx/html;
+
+    client_max_body_size ${CLIENT_MAX_BODY_SIZE};
+
+    # Used by the container healthcheck.
+    location = /health {
+        access_log off;
+        add_header Content-Type application/json;
+        return 200 '{"status":"healthy"}';
+    }
+
+    # Let's Encrypt HTTP-01 challenge. This must be served over plain HTTP,
+    # so it is matched with ^~ to keep it out of the redirect below.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type "text/plain";
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
