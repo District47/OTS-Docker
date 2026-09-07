@@ -1,0 +1,78 @@
+name: Release
+
+# Tag a version to publish a downloadable ZIP:
+#
+#     git tag v1.0.0 && git push origin v1.0.0
+#
+# install.ps1 looks for the newest release asset, so a tagged release is what
+# the one-line installer hands people.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate the PowerShell scripts
+        shell: pwsh
+        run: |
+          $bad = 0
+          Get-ChildItem -Filter *.ps1 | ForEach-Object {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName, [ref]$null, [ref]$errors)
+            if ($errors) {
+              Write-Host "::error file=$($_.Name)::$($errors[0].Message)"
+              $bad++
+            } else {
+              Write-Host "ok: $($_.Name)"
+            }
+          }
+          if ($bad) { exit 1 }
+
+      - name: Validate the Compose file
+        run: |
+          cp .env.example .env
+          sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=validationonly/' .env
+          sed -i 's/^RABBITMQ_PASSWORD=.*/RABBITMQ_PASSWORD=validationonly/' .env
+          docker compose config --quiet
+          docker compose --profile public config --quiet
+          rm .env
+
+      - name: Build the ZIP
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          mkdir -p dist/OTS-Docker
+          # Ship only what an end user needs - no CI config, no git metadata.
+          rsync -a --exclude '.git' --exclude '.github' --exclude 'dist' \
+                   --exclude '.env' --exclude 'backups' ./ dist/OTS-Docker/
+          cd dist
+          zip -r "OTS-Docker-${VERSION}.zip" OTS-Docker
+          ls -la
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            Open **PowerShell** and run:
+
+            ```powershell
+            irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex
+            ```
+
+            Or download the ZIP below, extract it, and double-click
+            **OTS Manager.cmd**.
+
+            Docker is installed later from a button inside the control panel —
+            you do not need it beforehand.
