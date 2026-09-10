@@ -31,10 +31,30 @@ shortcut on your Desktop and opens the control panel. It needs no administrator
 rights and installs nothing system-wide — the whole thing is one folder you can
 delete.
 
-Prefer to do it by hand? Download the ZIP from
-[Releases](https://github.com/District47/OTS-Docker/releases), extract it,
-right-click the ZIP → **Properties → Unblock** first, then double-click
-**`OTS Manager.cmd`**.
+### Or download it by hand
+
+Download the ZIP from
+[Releases](https://github.com/District47/OTS-Docker/releases), extract it, and
+**double-click `OTS Manager.cmd`**.
+
+> **Double-click the `.cmd` — do not run `setup.ps1` directly.**
+>
+> Windows marks every file extracted from a downloaded ZIP as untrusted, and
+> PowerShell then refuses to run them:
+>
+> ```
+> setup.ps1 cannot be loaded. The file ... is not digitally signed.
+> ```
+>
+> The `.cmd` files clear that mark for you, which is exactly why they exist.
+> `OTS Manager.cmd` opens the control panel; `Setup.cmd` runs the same install
+> in a console window if you prefer text.
+>
+> Already hit the error? Run this once in the folder, then try again:
+>
+> ```powershell
+> Get-ChildItem -Recurse | Unblock-File
+> ```
 
 ### Then work down the numbered buttons
 
