@@ -330,6 +330,7 @@ switch ($Command.ToLower()) {
         Write-Host "  Security and certificates" -ForegroundColor Cyan
         Write-Host "    set-admin-password Change the administrator password"
         Write-Host "    tls-only [on|all|off]  Choose which unencrypted ports stay open"
+        Write-Host "    truststore         Download the file TAK clients must import"
         Write-Host "    ca-export          Save the CA certificate for TAK clients"
         Write-Host "    server-cert        Reissue the server certificate"
         Write-Host ""
@@ -1246,11 +1247,80 @@ switch ($Command.ToLower()) {
         Write-Host "        Port    : $(Get-EnvValue 'OTS_SSL_COT_PORT' '8089')" -ForegroundColor White
         Write-Host "        Protocol: SSL" -ForegroundColor White
         Write-Host ""
-        Write-Host "     Tick 'Use Authentication' and 'Enroll for Client Certificate',"
-        Write-Host "     and import the truststore as usual - see docs\CLIENTS.md."
+        Write-Host "     Tick 'Use Authentication' and 'Enroll for Client Certificate'."
+        Write-Host ""
+        Write-Host "  3. IMPORTANT - import the trust store, or ATAK will refuse to" -ForegroundColor Yellow
+        Write-Host "     connect with 'The TAK Server''s identity could not be verified':" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "        On the device, open  https://$($info.DnsName)/api/truststore" -ForegroundColor White
+        Write-Host "        Password: $(Get-EnvValue 'OTS_CA_PASSWORD' 'atakatak')" -ForegroundColor White
+        Write-Host ""
+        Write-Host "     Then UNCHECK 'Use default SSL/TLS Certificates', CHECK"
+        Write-Host "     'Enroll with Preconfigured Trust', and Import Trust Store."
+        Write-Host "     Full steps: docs\CLIENTS.md   or run:  .\ots.ps1 truststore"
         Write-Host ""
         Write-Host "  No router changes, no port forwarding, and it keeps working when"
         Write-Host "  this machine moves to a different network." -ForegroundColor DarkGray
+        Write-Host ""
+    }
+
+    'truststore' {
+        Assert-Docker; Assert-Env
+
+        $fqdn = Get-EnvValue 'OTS_FQDN'
+        if (-not $fqdn -or $fqdn -eq '_') { $fqdn = 'localhost' }
+
+        Write-Step "Downloading the truststore"
+        Write-Host "    TAK clients need this to trust your server's certificate authority."
+        Write-Host ""
+
+        $safe = ($fqdn -replace '[^A-Za-z0-9\.\-]', '_')
+        $out  = Join-Path $PSScriptRoot "truststore-$safe.p12"
+
+        Invoke-Native {
+            & curl.exe -sk --max-time 20 -o $out "https://$fqdn/api/truststore"
+        }
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $out)) {
+            Write-Err "Could not download the truststore. Is the server running? (.\ots.ps1 status)"
+            exit 1
+        }
+
+        # A PKCS#12 file is DER: it must start with a SEQUENCE (0x30 0x82).
+        # Without this check an HTML error page would be saved as a .p12 and
+        # fail confusingly inside ATAK instead of here.
+        $bytes = [System.IO.File]::ReadAllBytes($out)
+        if ($bytes.Length -lt 100 -or $bytes[0] -ne 0x30 -or $bytes[1] -ne 0x82) {
+            Write-Err "What downloaded is not a PKCS#12 truststore - the server may have returned an error page."
+            Remove-Item $out -Force -ErrorAction SilentlyContinue
+            exit 1
+        }
+
+        Write-Ok "Saved $([System.IO.Path]::GetFileName($out)) ($($bytes.Length) bytes)"
+        Write-Host ""
+        Write-Host "  ------------------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host "  Import this into each TAK client" -ForegroundColor White
+        Write-Host "  ------------------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "  Password:  " -NoNewline
+        Write-Host (Get-EnvValue 'OTS_CA_PASSWORD' 'atakatak') -ForegroundColor White
+        Write-Host ""
+        Write-Host "  Easiest route - on the phone or tablet itself, open:"
+        Write-Host ""
+        Write-Host "      https://$fqdn/api/truststore" -ForegroundColor White
+        Write-Host ""
+        Write-Host "  (the browser will warn about the certificate first - that is the"
+        Write-Host "   same reason you need this file; continue past it)"
+        Write-Host ""
+        Write-Host "  Then in ATAK, on the server entry:" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "      - UNCHECK  'Use default SSL/TLS Certificates'"
+        Write-Host "      - CHECK    'Enroll with Preconfigured Trust'"
+        Write-Host "      - tap      'Import Trust Store' and pick this file"
+        Write-Host "      - CHECK    'Use Authentication'  (username and password)"
+        Write-Host "      - CHECK    'Enroll for Client Certificate'"
+        Write-Host ""
+        Write-Host "  Without the trust store ATAK reports:" -ForegroundColor DarkGray
+        Write-Host "  'The TAK Server's identity could not be verified'" -ForegroundColor DarkGray
         Write-Host ""
     }
 

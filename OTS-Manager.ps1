@@ -1374,6 +1374,17 @@ Add-ActionButton 'Encryption Policy' {
     } | Out-Null
 } 'Choose which unencrypted ports stay reachable'
 
+Add-ActionButton 'Get Client Trust Store' {
+    Invoke-OtsCommand -Title 'Download the trust store for TAK clients' `
+        -CommandArgs @('truststore') -Verify {
+        param($exit)
+        if ($exit -ne 0) { return @{ Ok = $false; Message = 'Could not download it - see the output above.' } }
+        $f = Get-ChildItem $Root -Filter 'truststore-*.p12' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($f) { @{ Ok = $true; Message = "Saved $($f.Name) - import it into each TAK client (password atakatak)." } }
+        else { @{ Ok = $false; Message = 'No trust store file was created.' } }
+    } | Out-Null
+} 'TAK clients need this or they refuse to trust the server'
+
 Add-ActionButton 'Export CA Certificate' {
     Invoke-OtsCommand -Title 'Export the CA certificate' -CommandArgs @('ca-export') -Verify $VerifyCaExport | Out-Null
 } 'Saves ca.pem for importing into TAK clients'

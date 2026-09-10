@@ -10,6 +10,9 @@ backups/
 # CA certificate exported by ots.ps1 ca-export
 ca.pem
 
+# Trust store downloaded by ots.ps1 truststore
+truststore-*.p12
+
 # Editor / OS noise
 .vscode/
 .idea/

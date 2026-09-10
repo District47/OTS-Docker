@@ -76,10 +76,30 @@ The device cannot reach the server. From the device's browser, try
 problem — check Windows Firewall and that both devices are on the same network.
 See [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
+**"The TAK Server's identity could not be verified"**
+
+This is the most common failure, and it is always the same cause: the trust
+store was not imported, so ATAK has never seen the certificate authority that
+signed your server's certificate.
+
+On the server:
+
+```bash
+.\ots.ps1 truststore
+```
+
+or on the device itself, open `https://<your-server>/api/truststore`. The
+password is `atakatak`.
+
+Then on the server entry in ATAK: **uncheck** "Use default SSL/TLS
+Certificates", **check** "Enroll with Preconfigured Trust", and use **Import
+Trust Store**. Ticking "Enroll for Client Certificate" alone is not enough —
+enrollment itself happens over TLS, so the trust has to be in place first.
+
 **"Invalid certificate" or the client rejects the server**
 
-You are on a self-signed certificate and skipped the truststore import, or
-imported it with the wrong password (it is `atakatak`).
+Same cause as above, or the trust store was imported with the wrong password
+(it is `atakatak`).
 
 **Enrollment succeeds but no data flows**
 
