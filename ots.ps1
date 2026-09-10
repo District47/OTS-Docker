@@ -212,6 +212,42 @@ function Get-LanAddress {
     return $null
 }
 
+function Get-TailscaleExe {
+    <#  tailscale.exe is not added to PATH by the installer. #>
+    if (Get-Command tailscale -ErrorAction SilentlyContinue) { return (Get-Command tailscale).Source }
+    foreach ($c in @("$env:ProgramFiles\Tailscale\tailscale.exe",
+                     "${env:ProgramFiles(x86)}\Tailscale\tailscale.exe")) {
+        if (Test-Path $c) { return $c }
+    }
+    return $null
+}
+
+function Get-TailscaleInfo {
+    <#  Returns @{ Running; State; HostName; DnsName; Ip }.
+        Only this machine's own entry is read - the tailnet may contain other
+        people's devices and none of that is needed here. #>
+    $info = @{ Running = $false; State = 'not installed'; HostName = $null; DnsName = $null; Ip = $null }
+    $ts = Get-TailscaleExe
+    if (-not $ts) { return $info }
+
+    try {
+        $raw = Invoke-Native { & $ts status --json 2>$null }
+        $j = ($raw | Out-String) | ConvertFrom-Json
+    } catch { $info.State = 'unreadable'; return $info }
+
+    if (-not $j) { $info.State = 'unreadable'; return $info }
+    $info.State = $j.BackendState
+    $info.Running = ($j.BackendState -eq 'Running')
+
+    if ($j.Self) {
+        $info.HostName = $j.Self.HostName
+        # MagicDNS names come back fully qualified with a trailing dot.
+        if ($j.Self.DNSName) { $info.DnsName = $j.Self.DNSName.TrimEnd('.') }
+        $info.Ip = ($j.Self.TailscaleIPs | Where-Object { $_ -notmatch ':' } | Select-Object -First 1)
+    }
+    return $info
+}
+
 function ConvertTo-PlainText {
     param($Secure)
     $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
@@ -287,6 +323,7 @@ switch ($Command.ToLower()) {
         Write-Host ""
         Write-Host "  Internet access" -ForegroundColor Cyan
         Write-Host "    go-public          Configure dynamic DNS + TLS for internet access"
+        Write-Host "    tailscale [on|off] Reach it from anywhere without port forwarding"
         Write-Host "    check-internet     Verify DNS and listeners before requesting a cert"
         Write-Host "    cert-request       Issue/renew the Let's Encrypt certificate"
         Write-Host ""
@@ -1076,6 +1113,146 @@ switch ($Command.ToLower()) {
         }
     }
 
+
+    'tailscale' {
+        Assert-Env
+
+        $mode = if ($Arguments -and $Arguments.Count -ge 1) { $Arguments[0].ToLower() } else { 'on' }
+        if ($mode -notin @('on', 'off', 'status')) {
+            Write-Err "Usage: .\ots.ps1 tailscale [on|off|status]"
+            Write-Host ""
+            Write-Host "      on      point the server at its Tailscale name - no port forwarding"
+            Write-Host "      off     go back to the local network address"
+            Write-Host "      status  show the current Tailscale state"
+            exit 1
+        }
+
+        $ts = Get-TailscaleExe
+        if (-not $ts) {
+            Write-Err "Tailscale is not installed."
+            Write-Host ""
+            Write-Host "    Install it, then run this again:"
+            Write-Host ""
+            Write-Host "        winget install -e --id Tailscale.Tailscale" -ForegroundColor White
+            Write-Host ""
+            Write-Host "    Or download it from https://tailscale.com/download/windows"
+            exit 1
+        }
+
+        $info = Get-TailscaleInfo
+        if (-not $info.Running) {
+            Write-Err "Tailscale is installed but not connected (state: $($info.State))."
+            Write-Host ""
+            Write-Host "    Open the Tailscale app from the system tray and sign in, or run:"
+            Write-Host ""
+            Write-Host "        & '$ts' up" -ForegroundColor White
+            Write-Host ""
+            Write-Host "    Then run this again."
+            exit 1
+        }
+
+        # -------------------------------------------------------------------
+        if ($mode -eq 'status') {
+            Write-Step "Tailscale"
+            Write-Ok "Connected as $($info.HostName)"
+            Write-Host "    Tailnet name : $($info.DnsName)"
+            Write-Host "    Tailnet IP   : $($info.Ip)"
+            Write-Host ""
+            $fqdn = Get-EnvValue 'OTS_FQDN'
+            if ($fqdn -eq $info.DnsName -or $fqdn -eq $info.Ip) {
+                Write-Ok "The server is pointed at its Tailscale address."
+            } else {
+                Write-Warn "The server is pointed at '$fqdn', not its Tailscale address."
+                Write-Host "        Switch with:  .\ots.ps1 tailscale on"
+            }
+            exit 0
+        }
+
+        # -------------------------------------------------------------------
+        if ($mode -eq 'off') {
+            $lan = Get-LanAddress
+            if (-not $lan) { Write-Err "Could not detect a LAN address."; exit 1 }
+            Write-Step "Going back to the local network address"
+            Set-EnvValue 'OTS_FQDN' $lan
+            Invoke-Compose ((Get-ActiveProfileArgs) + @('up', '-d', 'nginx'))
+            Write-Ok "Server address is now $lan"
+            Write-Host "    Tailscale itself is untouched - clients on your tailnet can still"
+            Write-Host "    reach the server at $($info.DnsName)."
+            exit 0
+        }
+
+        # -------------------------------------------------------------------
+        Write-Step "Pointing the server at its Tailscale address"
+        Write-Ok "Connected as $($info.HostName)"
+        Write-Host "    Tailnet name : $($info.DnsName)"
+        Write-Host "    Tailnet IP   : $($info.Ip)"
+        Write-Host ""
+
+        # A Let's Encrypt certificate is issued for a public domain and will not
+        # match a .ts.net name, so leaving the mode set would serve a
+        # mismatched certificate on every request.
+        if ((Get-EnvValue 'OTS_TLS_MODE') -eq 'letsencrypt') {
+            Write-Warn "TLS mode was 'letsencrypt', whose certificate is issued for your public"
+            Write-Warn "domain and does not cover $($info.DnsName). Switching to self-signed."
+            Write-Warn "Run '.\ots.ps1 go-public' if you want the public name back."
+            Set-EnvValue 'OTS_TLS_MODE' 'self-signed'
+            Write-Host ""
+        }
+
+        Set-EnvValue 'OTS_FQDN' $info.DnsName
+        Write-Ok "OTS_FQDN set to $($info.DnsName)"
+
+        Write-Step "Applying"
+        Invoke-Compose ((Get-ActiveProfileArgs) + @('up', '-d'))
+        if ($LASTEXITCODE -ne 0) { Write-Err "Failed to recreate containers."; exit 1 }
+
+        # -------------------------------------------------------------------
+        Write-Step "Verifying over the tailnet"
+        Start-Sleep -Seconds 5
+        $bad = 0
+
+        $code = & curl.exe -sk -o NUL -w '%{http_code}' --max-time 10 "https://$($info.DnsName)/" 2>$null
+        if ($code -eq '200') { Write-Ok "Web UI answers at https://$($info.DnsName)" }
+        else { Write-Err "Web UI did not answer over Tailscale (HTTP $code)"; $bad++ }
+
+        foreach ($p in @(
+            @{ Port = (Get-EnvValue 'OTS_MARTI_HTTPS_PORT' '8443');     Name = 'Marti API' }
+            @{ Port = (Get-EnvValue 'OTS_CERT_ENROLLMENT_PORT' '8446'); Name = 'Enrollment' }
+            @{ Port = (Get-EnvValue 'OTS_SSL_COT_PORT' '8089');         Name = 'CoT over TLS' }
+        )) {
+            $open = Test-NetConnection -ComputerName $info.Ip -Port ([int]$p.Port) -WarningAction SilentlyContinue -InformationLevel Quiet
+            if ($open) { Write-Ok "port $($p.Port) ($($p.Name)) reachable over the tailnet" }
+            else { Write-Err "port $($p.Port) ($($p.Name)) NOT reachable over the tailnet"; $bad++ }
+        }
+
+        Write-Host ""
+        if ($bad -gt 0) {
+            Write-Err "$bad check(s) failed - see above."
+            exit 1
+        }
+
+        Write-Ok "Reachable over Tailscale with no port forwarding."
+        Write-Host ""
+        Write-Host "  ------------------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host "  On each phone or tablet:" -ForegroundColor White
+        Write-Host "  ------------------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "  1. Install Tailscale from the Play Store or App Store and sign"
+        Write-Host "     in to the SAME account as this machine."
+        Write-Host ""
+        Write-Host "  2. In ATAK, add the server exactly as you would on a LAN:"
+        Write-Host ""
+        Write-Host "        Address : $($info.DnsName)" -ForegroundColor White
+        Write-Host "        Port    : $(Get-EnvValue 'OTS_SSL_COT_PORT' '8089')" -ForegroundColor White
+        Write-Host "        Protocol: SSL" -ForegroundColor White
+        Write-Host ""
+        Write-Host "     Tick 'Use Authentication' and 'Enroll for Client Certificate',"
+        Write-Host "     and import the truststore as usual - see docs\CLIENTS.md."
+        Write-Host ""
+        Write-Host "  No router changes, no port forwarding, and it keeps working when"
+        Write-Host "  this machine moves to a different network." -ForegroundColor DarkGray
+        Write-Host ""
+    }
 
     'server-cert' {
         Assert-Docker; Assert-Env

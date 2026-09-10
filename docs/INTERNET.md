@@ -118,8 +118,12 @@ reboot and every forwarding rule silently points at nothing.
 > Some ISPs use CGNAT, which makes inbound port forwarding impossible no matter
 > what you configure. If your router's WAN address starts with `100.64.`–`100.127.`
 > or differs from what `.\ots.ps1 check-internet` reports as your public IP,
-> you are behind CGNAT. Ask your ISP for a public IP, or use a tunnel
-> (Cloudflare Tunnel, Tailscale Funnel) instead.
+> you are behind CGNAT.
+>
+> **In that case stop here and use [TAILSCALE.md](TAILSCALE.md) instead.** It
+> needs no port forwarding at all and works fine behind CGNAT. Note that
+> Tailscale *Funnel* is not a substitute — it only listens on 443/8443/10000
+> and terminates TLS itself, which breaks TAK certificate authentication.
 
 ## Step 3 — allow it through Windows Firewall
 

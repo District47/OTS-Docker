@@ -1228,6 +1228,66 @@ Add-ActionButton 'Edit config.yml' {
 # ---- Internet --------------------------------------------------------------
 Add-SectionLabel 'Internet access'
 
+Add-ActionButton 'Use Tailscale (no ports)' {
+    $ts = @("$env:ProgramFiles\Tailscale\tailscale.exe",
+            "${env:ProgramFiles(x86)}\Tailscale\tailscale.exe") |
+          Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    if (-not $ts) {
+        $msg = @"
+Tailscale is not installed.
+
+It creates a private encrypted network between your devices, so this server
+becomes reachable from your phone or tablet anywhere - with no port
+forwarding and no router changes at all. It works behind CGNAT, which
+ordinary port forwarding cannot.
+
+The catch: every device that connects must also run Tailscale and be signed
+in to the same account. The server is NOT public - only your own devices
+reach it.
+
+Free for personal use (up to 100 devices).
+
+Install it now with winget? Windows will ask for permission.
+"@
+        $r = [System.Windows.Forms.MessageBox]::Show($msg, 'Install Tailscale', 'YesNo', 'Question')
+        if ($r -ne 'Yes') { Set-Banner 'Cancelled - nothing was installed.' 'idle'; return }
+
+        Set-ButtonsEnabled $false
+        Clear-Console
+        Add-Line '==> Installing Tailscale' $ColAccent
+        Set-Banner 'Installing Tailscale...' 'busy'
+        try {
+            $p = Start-Process winget.exe -PassThru -Wait -ArgumentList @(
+                'install', '-e', '--id', 'Tailscale.Tailscale',
+                '--accept-package-agreements', '--accept-source-agreements')
+            Add-Line "winget finished with exit code $($p.ExitCode)"
+        } catch { Add-Line "Install failed: $($_.Exception.Message)" $ColErr }
+
+        $ts = @("$env:ProgramFiles\Tailscale\tailscale.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if ($ts) {
+            Add-Line ''
+            Add-Line '[ok] Tailscale installed.' $ColOk
+            Add-Line '     Now open Tailscale from the system tray and sign in,' $ColMuted
+            Add-Line '     then press this button again.' $ColMuted
+            Set-Banner 'VERIFIED - installed. Sign in to Tailscale, then press this again.' 'ok'
+        } else {
+            Add-Line '[x] Tailscale still not detected.' $ColErr
+            Set-Banner 'NOT APPLIED - Tailscale was not installed.' 'fail'
+        }
+        Set-ButtonsEnabled $true
+        return
+    }
+
+    Invoke-OtsCommand -Title 'Point the server at its Tailscale address' `
+        -CommandArgs @('tailscale', 'on') -Verify {
+        param($exit)
+        if ($exit -ne 0) { return @{ Ok = $false; Message = 'Not reachable over Tailscale yet - see the output above.' } }
+        $fqdn = Get-EnvValue 'OTS_FQDN'
+        @{ Ok = $true; Message = "Reachable at $fqdn over Tailscale - no port forwarding needed." }
+    } | Out-Null
+} 'Private mesh VPN - works behind CGNAT, no router changes'
+
 Add-ActionButton 'Set Up Internet Access' {
     if (Test-DefaultAdminPassword) {
         [System.Windows.Forms.MessageBox]::Show(

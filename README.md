@@ -179,6 +179,7 @@ components.
 | `.\ots.ps1 set-admin-password` | Change the administrator password |
 | `.\ots.ps1 tls-only on` | Choose which unencrypted ports stay reachable |
 | `.\ots.ps1 go-public` | Configure internet access (DDNS + TLS) |
+| `.\ots.ps1 tailscale on` | Reach it from anywhere without port forwarding |
 | `.\ots.ps1 check-internet` | Verify DNS and listeners |
 | `.\ots.ps1 doctor` | Check for common problems |
 | `.\ots.ps1 reset` | Delete everything and start over |
@@ -308,6 +309,24 @@ timer to pick the new certificate up.
 
 **Full walkthrough, including the router steps and what you are exposing:
 [docs/INTERNET.md](docs/INTERNET.md).**
+
+### Can't get port forwarding to work?
+
+Plenty of connections make it impossible — CGNAT, ISPs blocking inbound
+ports, or a router you don't control. Use Tailscale instead:
+
+```bash
+.\ots.ps1 tailscale on
+```
+
+It builds a private encrypted network between your own devices, so the server
+is reachable from anywhere with **no port forwarding and no router changes**,
+and every TAK port works. The trade-off is that each phone or tablet must also
+run Tailscale, signed in to the same account — the server stays private rather
+than public.
+
+It also gives you a stable name that survives moving between networks, which
+the LAN-IP route does not. See **[docs/TAILSCALE.md](docs/TAILSCALE.md)**.
 
 Two things worth knowing before you start:
 
