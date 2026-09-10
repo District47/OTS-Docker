@@ -13,12 +13,20 @@ that is automatic. You do not have to build data packages by hand.
 In the web UI (`https://<your-server>`), go to **Users** and add an account for
 each device. Do not hand out the `administrator` account.
 
-## 2. Download the truststore (self-signed only)
+## 2. Download the truststore — required, always
 
-Skip this if you set up Let's Encrypt.
+This step is not optional, and it is not only for self-signed setups.
 
-Because the server signs its own certificate, clients need a copy of its
-certificate authority before they will trust it:
+Even with Let's Encrypt, **the TAK ports keep using OpenTAKServer's own
+certificate authority**. Only the web UI on port 443 uses the public
+certificate. Enrollment (8446), the Marti API (8443) and CoT streaming (8089)
+all present the private CA, because TAK client-certificate authentication
+requires both ends to belong to the same PKI.
+
+Skip this and ATAK will refuse to connect with *"The TAK Server's identity
+could not be verified"*.
+
+Clients need a copy of that certificate authority before they will trust it:
 
 * In the web UI, click **Download Truststore**, or
 * browse to `https://<your-server>/api/truststore`
@@ -40,14 +48,15 @@ Copy that file to the device — for Android, anywhere you can browse to, such a
    * **Streaming Protocol** — `SSL`
 5. Check **Use Authentication**, then enter the username and password from step 1
 6. Check **Enroll for Client Certificate**
-7. **If you are using the self-signed certificate:**
+7. Then, **in every configuration** — self-signed or Let's Encrypt:
    * uncheck **Use default SSL/TLS Certificates**
    * make sure **Enroll with Preconfigured Trust** is checked
    * tap **Import Trust Store**, pick the file from step 2, and enter `atakatak`
-8. **If you are using Let's Encrypt:**
-   * leave **Use default SSL/TLS Certificates** checked
-   * uncheck **Enroll with Preconfigured Trust**
-9. Tap **Ok**
+8. Tap **Ok**
+
+> Ticking **Enroll for Client Certificate** is not enough on its own.
+> Enrollment itself happens over TLS, so the trust has to be in place before
+> enrollment can even begin.
 
 The client enrols over port **8446**, receives its certificate, and connects on
 port **8089**. You should see it appear under **EUDs** in the web UI within a

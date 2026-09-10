@@ -781,6 +781,145 @@ function Show-TlsPolicyDialog {
     return $script:TlsChoice
 }
 
+function Get-OtsUsers {
+    <#  Returns @( @{ Name; Active } ). The table is named "user", which is a
+        reserved word in PostgreSQL and has to stay quoted. #>
+    $out = @()
+    try {
+        $dbUser = Get-EnvValue 'POSTGRES_USER' 'ots'
+        $dbName = Get-EnvValue 'POSTGRES_DB'   'ots'
+        $sql = 'select username || ''|'' || active from public."user" order by id;'
+        $rows = & docker compose exec -T ots-db psql -U $dbUser -d $dbName -t -A -c $sql 2>$null
+        foreach ($r in $rows) {
+            $line = "$r".Trim()
+            if (-not $line -or $line -notmatch '\|') { continue }
+            $parts = $line.Split('|')
+            $out += @{ Name = $parts[0]; Active = ($parts[1] -eq 't' -or $parts[1] -eq 'true') }
+        }
+    } catch { }
+    return $out
+}
+
+function Show-ClientSetup {
+    $fqdn = Get-EnvValue 'OTS_FQDN'
+    if (-not $fqdn -or $fqdn -eq '_') { $fqdn = (Get-LanAddressGui) }
+    $caPw = Get-EnvValue 'OTS_CA_PASSWORD' 'atakatak'
+    $port = Get-EnvValue 'OTS_SSL_COT_PORT' '8089'
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text = 'Connect a TAK client'
+    $dlg.Size = New-Object System.Drawing.Size(720, 660)
+    $dlg.StartPosition = 'CenterParent'
+    $dlg.BackColor = $ColBg; $dlg.ForeColor = $ColText; $dlg.Font = $FontUi
+
+    $y = 14
+    function Add-Text {
+        param([string]$Text, [int]$Height = 22, $Color = $null, $Font = $null)
+        $l = New-Object System.Windows.Forms.Label
+        $l.Text = $Text
+        $l.Location = New-Object System.Drawing.Point(20, $script:cy)
+        $l.Size = New-Object System.Drawing.Size(660, $Height)
+        if ($Color) { $l.ForeColor = $Color }
+        if ($Font)  { $l.Font = $Font }
+        $dlg.Controls.Add($l)
+        $script:cy += $Height
+    }
+    $script:cy = $y
+
+    Add-Text 'Step 1 - settings to enter in ATAK' 24 $ColAccent $FontBold
+    Add-Text "    Address   $fqdn" 20 $ColText $FontMono
+    Add-Text "    Port      $port" 20 $ColText $FontMono
+    Add-Text "    Protocol  SSL" 20 $ColText $FontMono
+    $script:cy += 8
+
+    Add-Text 'Step 2 - import the trust store (this is not optional)' 24 $ColAccent $FontBold
+    Add-Text 'Without it ATAK reports "The TAK Server''s identity could not be' 20 $ColWarn
+    Add-Text 'verified" and will not connect - even with a Let''s Encrypt setup,' 20 $ColWarn
+    Add-Text 'because the TAK ports always use OpenTAKServer''s own CA.' 20 $ColWarn
+    $script:cy += 6
+    Add-Text "    On the device, open:  https://$fqdn/api/truststore" 20 $ColText $FontMono
+    Add-Text "    Trust store password: $caPw" 20 $ColText $FontMono
+    $script:cy += 10
+
+    Add-Text 'Step 3 - tick these, in this order' 24 $ColAccent $FontBold
+    Add-Text '    1.  UNCHECK  Use default SSL/TLS Certificates' 20 $ColText $FontMono
+    Add-Text '    2.  CHECK    Enroll with Preconfigured Trust' 20 $ColText $FontMono
+    Add-Text '    3.  Import Trust Store  ->  the .p12 from step 2' 20 $ColText $FontMono
+    Add-Text '    4.  CHECK    Use Authentication  (username + password)' 20 $ColText $FontMono
+    Add-Text '    5.  CHECK    Enroll for Client Certificate' 20 $ColText $FontMono
+    $script:cy += 4
+    Add-Text 'Enrollment itself runs over TLS, so the trust must exist first.' 20 $ColMuted
+    $script:cy += 10
+
+    # ---- accounts -------------------------------------------------------
+    Add-Text 'Step 4 - the account to enrol with' 24 $ColAccent $FontBold
+    $users = Get-OtsUsers
+    if ($users.Count -eq 0) {
+        Add-Text '    (could not read the user list - is the server running?)' 20 $ColMuted
+    } else {
+        foreach ($u in $users) {
+            if ($u.Active) {
+                Add-Text "    $($u.Name)  - usable" 20 $ColOk $FontMono
+            } else {
+                Add-Text "    $($u.Name)  - INACTIVE, enrollment will fail" 20 $ColErr $FontMono
+            }
+        }
+        if (-not ($users | Where-Object { $_.Active })) {
+            Add-Text '    No active account - activate one on the Users page first.' 20 $ColErr
+        }
+    }
+
+    # ---- buttons --------------------------------------------------------
+    $by = 570
+    $b1 = New-Object System.Windows.Forms.Button
+    $b1.Text = 'Download trust store here'
+    $b1.Size = New-Object System.Drawing.Size(210, 34)
+    $b1.Location = New-Object System.Drawing.Point(20, $by)
+    $b1.FlatStyle = 'Flat'; $b1.BackColor = $ColPanel; $b1.ForeColor = $ColText
+    $b1.Add_Click({ $dlg.Close(); $script:ClientAction = 'truststore' })
+    $dlg.Controls.Add($b1)
+
+    $b2 = New-Object System.Windows.Forms.Button
+    $b2.Text = 'Copy these settings'
+    $b2.Size = New-Object System.Drawing.Size(170, 34)
+    $b2.Location = New-Object System.Drawing.Point(240, $by)
+    $b2.FlatStyle = 'Flat'; $b2.BackColor = $ColPanel; $b2.ForeColor = $ColText
+    $b2.Add_Click({
+        $txt = @"
+TAK client setup
+
+Address   $fqdn
+Port      $port
+Protocol  SSL
+
+Trust store: https://$fqdn/api/truststore
+Password   : $caPw
+
+In ATAK:
+  1. UNCHECK  Use default SSL/TLS Certificates
+  2. CHECK    Enroll with Preconfigured Trust
+  3. Import Trust Store -> the .p12 above
+  4. CHECK    Use Authentication (username + password)
+  5. CHECK    Enroll for Client Certificate
+"@
+        try { [System.Windows.Forms.Clipboard]::SetText($txt); $b2.Text = 'Copied' } catch { }
+    })
+    $dlg.Controls.Add($b2)
+
+    $b3 = New-Object System.Windows.Forms.Button
+    $b3.Text = 'Close'
+    $b3.Size = New-Object System.Drawing.Size(100, 34)
+    $b3.Location = New-Object System.Drawing.Point(580, $by)
+    $b3.FlatStyle = 'Flat'; $b3.BackColor = $ColPanel; $b3.ForeColor = $ColText
+    $b3.Add_Click({ $dlg.Close() })
+    $dlg.Controls.Add($b3)
+    $dlg.CancelButton = $b3
+
+    $script:ClientAction = $null
+    [void]$dlg.ShowDialog()
+    return $script:ClientAction
+}
+
 function Show-PortForwardHelper {
     $lan     = Get-EnvValue 'OTS_FQDN'
     if (-not $lan -or $lan -eq '_' -or $lan -notmatch '^\d+\.\d+\.\d+\.\d+$') {
@@ -1139,14 +1278,30 @@ Add-ActionButton '3. Build and Install Server' {
         if (-not (Test-SetupComplete)) { return @{ Ok = $false; Message = 'Setup did not create a .env file.' } }
         Add-Line '  waiting for the server to report healthy...' $ColMuted
         if (Wait-ForHealthy -TimeoutSec 300) {
-            @{ Ok = $true; Message = 'Installed and running. Open the web UI and change the admin password.' }
+            @{ Ok = $true; Message = 'Installed and running. Next: change the admin password, then press "4. Connect a TAK Client".' }
         } else {
             @{ Ok = $false; Message = 'Installed, but the server has not become healthy yet - check View Logs.' }
         }
     } | Out-Null
 } 'Downloads images, builds and starts everything'
 
-Add-ActionButton '4. Port Forwarding Help' {
+Add-ActionButton '4. Connect a TAK Client' {
+    $action = Show-ClientSetup
+    if ($action -eq 'truststore') {
+        Invoke-OtsCommand -Title 'Download the trust store for TAK clients' `
+            -CommandArgs @('truststore') -Verify {
+            param($exit)
+            if ($exit -ne 0) { return @{ Ok = $false; Message = 'Could not download it - see the output above.' } }
+            $f = Get-ChildItem $Root -Filter 'truststore-*.p12' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($f) { @{ Ok = $true; Message = "Saved $($f.Name) - copy it to the device and import it (password atakatak)." } }
+            else { @{ Ok = $false; Message = 'No trust store file was created.' } }
+        } | Out-Null
+    } else {
+        Set-Banner 'Client settings shown. The trust store step is required, not optional.' 'idle'
+    }
+} 'Exact ATAK settings, the trust store, and which account to use'
+
+Add-ActionButton '5. Port Forwarding Help' {
     Show-PortForwardHelper
     Set-Banner 'Prompt builder closed. Forward the ports, then use "Check Internet Setup".' 'idle'
 } 'Builds a prompt describing your router and ports for Claude or ChatGPT'
