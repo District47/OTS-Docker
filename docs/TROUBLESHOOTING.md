@@ -19,17 +19,50 @@ Then look at the logs for whichever piece is unhappy:
 
 ## Setup and startup
 
-### `setup.ps1` will not run
+### A script "cannot be loaded" / "is not digitally signed"
+
+```
+File ... cannot be loaded. The file ... is not digitally signed.
+```
+
+or
 
 ```
 File ... cannot be loaded because running scripts is disabled on this system.
 ```
 
-Windows blocks unsigned scripts by default. Allow them for this window only:
+**Fix, in the folder you extracted:**
+
+```bash
+cd C:\path\to\OTS-Docker
+Get-ChildItem -Recurse | Unblock-File
+```
+
+Then run it again.
+
+`Unblock-File` is a built-in command, not a script, so it works even when
+every script is blocked. `Get-ChildItem -Recurse` only covers the folder you
+are currently in, so `cd` there first.
+
+**Why it happens.** Windows tags every file extracted from a downloaded ZIP
+with a "downloaded from the internet" marker. The default `RemoteSigned`
+policy then refuses to run them unless they carry a code-signing certificate,
+which this project does not have. Nothing is wrong with the files — Windows
+simply cannot tell a trustworthy download from an untrustworthy one, so it
+blocks all of them.
+
+Both `OTS Manager.cmd` and `Setup.cmd` clear the marker automatically, so
+launching through either avoids this entirely. The error only appears if you
+run a `.ps1` file directly.
+
+If it still refuses after unblocking, your machine has a stricter policy
+(`AllSigned`, or one set by group policy). Allow scripts for one window:
 
 ```bash
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
+
+That affects only the window you type it in and resets when you close it.
 
 ### "Docker is installed but not running"
 

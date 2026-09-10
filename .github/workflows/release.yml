@@ -71,8 +71,23 @@ jobs:
             irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex
             ```
 
-            Or download the ZIP below, extract it, and double-click
-            **OTS Manager.cmd**.
+            That handles everything, including unblocking the download.
+
+            ### Downloading the ZIP instead?
+
+            Extract it, then **run this first** in the extracted folder:
+
+            ```powershell
+            cd C:\path\to\OTS-Docker
+            Get-ChildItem -Recurse | Unblock-File
+            ```
+
+            Windows marks files from a downloaded ZIP as untrusted and
+            PowerShell refuses them until that mark is cleared — otherwise you
+            get `... is not digitally signed`.
+
+            Then double-click **OTS Manager.cmd** (or `Setup.cmd` for console
+            output).
 
             Docker is installed later from a button inside the control panel —
             you do not need it beforehand.

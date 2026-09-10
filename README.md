@@ -33,28 +33,41 @@ delete.
 
 ### Or download it by hand
 
-Download the ZIP from
-[Releases](https://github.com/District47/OTS-Docker/releases), extract it, and
-**double-click `OTS Manager.cmd`**.
+**1.** Download the ZIP from
+[Releases](https://github.com/District47/OTS-Docker/releases) and extract it.
 
-> **Double-click the `.cmd` — do not run `setup.ps1` directly.**
->
-> Windows marks every file extracted from a downloaded ZIP as untrusted, and
-> PowerShell then refuses to run them:
->
-> ```
-> setup.ps1 cannot be loaded. The file ... is not digitally signed.
-> ```
->
-> The `.cmd` files clear that mark for you, which is exactly why they exist.
-> `OTS Manager.cmd` opens the control panel; `Setup.cmd` runs the same install
-> in a console window if you prefer text.
->
-> Already hit the error? Run this once in the folder, then try again:
->
-> ```powershell
-> Get-ChildItem -Recurse | Unblock-File
-> ```
+**2. Run this first.** Open PowerShell, change into the extracted folder, and
+run:
+
+```bash
+cd C:\path\to\OTS-Docker
+Get-ChildItem -Recurse | Unblock-File
+```
+
+Windows marks every file extracted from a downloaded ZIP as untrusted, and
+PowerShell refuses to run them until that mark is cleared:
+
+```
+setup.ps1 cannot be loaded. The file ... is not digitally signed.
+```
+
+`Unblock-File` clears it. It is a built-in command, so it always runs even
+when scripts are blocked. Do this **before** anything else.
+
+> Make sure you `cd` into the extracted folder first — `Get-ChildItem -Recurse`
+> only unblocks files under the folder you are currently in.
+
+**3.** Then start it:
+
+```bash
+& ".\OTS Manager.cmd"
+```
+
+or just double-click **`OTS Manager.cmd`** in Explorer. Prefer console output?
+Use `Setup.cmd` instead.
+
+Both `.cmd` files also clear the mark themselves, so step 2 is belt-and-braces
+— but running it first means you never see the error at all.
 
 ### Then work down the numbered buttons
 
