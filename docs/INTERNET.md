@@ -105,10 +105,10 @@ Forward each port to **this machine's LAN IP** — `.\ots.ps1 doctor` prints it.
  8883  TCP    MQTT over TLS
  8080  TCP    Marti over plain HTTP        (skip unless needed)
  8088  TCP    CoT without encryption       (skip unless needed)
- 1935,1936,8322,8554,8888,8889   TCP   video
+ 1935,1936,8322,8554,8888        TCP   video
  8000,8001                       UDP   video - media for plain RTSP
  8004,8005                       UDP   video - media for encrypted RTSPS
- 8189,8890                       UDP   video - WebRTC, SRT
+ 8890                            UDP   video - SRT
 ```
 
 **Also give this PC a DHCP reservation** (often "Static Lease" or "Address

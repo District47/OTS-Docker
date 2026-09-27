@@ -325,7 +325,7 @@ services:
       start_period: 60s
 
   # -------------------------------------------------------------------------
-  # MediaMTX - video streaming (RTSP/RTMP/HLS/WebRTC/SRT).
+  # MediaMTX - video streaming (RTSP/RTMP/HLS/SRT; WebRTC is switched off).
   #
   # Reads its config from the shared volume because OpenTAKServer rewrites
   # that file on startup to inject the webhook API token.
@@ -348,12 +348,16 @@ services:
       # in TLS-only mode 8000/8001 are the ones sitting idle.
       - "${VIDEO_SRTP_PORT:-8004}:8004/udp"
       - "${VIDEO_SRTCP_PORT:-8005}:8005/udp"
-      - "${VIDEO_WEBRTC_UDP_PORT:-8189}:8189/udp"
       - "${VIDEO_RTSPS_PORT:-8322}:8322"
       - "${OTS_VIDEO_PLAINTEXT_BIND:-0.0.0.0}:${VIDEO_RTSP_PORT:-8554}:8554"
       - "${OTS_VIDEO_PLAINTEXT_BIND:-0.0.0.0}:${VIDEO_HLS_PORT:-8888}:8888"
-      - "${OTS_VIDEO_PLAINTEXT_BIND:-0.0.0.0}:${VIDEO_WEBRTC_PORT:-8889}:8889"
       - "${VIDEO_SRT_PORT:-8890}:8890/udp"
+      # WebRTC is switched off in mediamtx.yml (webrtc: no). Its ports stay
+      # bound to this machine only unless OTS_WEBRTC_BIND=0.0.0.0 is set in
+      # .env - which survives updates, unlike an edit here. See the README,
+      # "Ports", for turning it on.
+      - "${OTS_WEBRTC_BIND:-127.0.0.1}:${VIDEO_WEBRTC_PORT:-8889}:8889"
+      - "${OTS_WEBRTC_BIND:-127.0.0.1}:${VIDEO_WEBRTC_UDP_PORT:-8189}:8189/udp"
     volumes:
       - ots_data:/app/ots
     networks:

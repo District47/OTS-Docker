@@ -704,12 +704,10 @@ function Get-ForwardPortTable {
             @{ Port = (Get-EnvValue 'VIDEO_RTSPS_PORT' '8322');    Proto = 'TCP'; Why = 'Video (RTSPS)' }
             @{ Port = (Get-EnvValue 'VIDEO_RTSP_PORT' '8554');     Proto = 'TCP'; Why = 'Video (RTSP)' }
             @{ Port = (Get-EnvValue 'VIDEO_HLS_PORT' '8888');      Proto = 'TCP'; Why = 'Video (HLS)' }
-            @{ Port = (Get-EnvValue 'VIDEO_WEBRTC_PORT' '8889');   Proto = 'TCP'; Why = 'Video (WebRTC)' }
             @{ Port = (Get-EnvValue 'VIDEO_RTP_PORT' '8000');      Proto = 'UDP'; Why = 'Video (RTP) - media for plain RTSP' }
             @{ Port = (Get-EnvValue 'VIDEO_RTCP_PORT' '8001');     Proto = 'UDP'; Why = 'Video (RTCP) - media for plain RTSP' }
             @{ Port = (Get-EnvValue 'VIDEO_SRTP_PORT' '8004');     Proto = 'UDP'; Why = 'Video (SRTP) - media for encrypted RTSPS' }
             @{ Port = (Get-EnvValue 'VIDEO_SRTCP_PORT' '8005');    Proto = 'UDP'; Why = 'Video (SRTCP) - media for encrypted RTSPS' }
-            @{ Port = (Get-EnvValue 'VIDEO_WEBRTC_UDP_PORT' '8189');Proto = 'UDP'; Why = 'Video (WebRTC media)' }
             @{ Port = (Get-EnvValue 'VIDEO_SRT_PORT' '8890');      Proto = 'UDP'; Why = 'Video (SRT)' }
         )
     }
@@ -797,7 +795,7 @@ function Show-TlsPolicyDialog {
         @{ Mode = 'on';  Title = 'TAK encrypted, video either way   (recommended)';
            Body = "Closes 8080 (plain Marti API) and 8088 (unencrypted CoT).`r`nLeaves plain RTSP/RTMP running alongside RTSPS/RTMPS, so cameras`r`nand encoders that only speak plain video keep working." }
         @{ Mode = 'all'; Title = 'Everything encrypted';
-           Body = "Also closes plain RTSP, RTMP, HLS and WebRTC. MediaMTX refuses`r`nunencrypted connections entirely. Anything that cannot do RTSPS`r`nor RTMPS will stop working." }
+           Body = "Also closes plain RTSP, RTMP and HLS. MediaMTX refuses`r`nunencrypted connections entirely. Anything that cannot do RTSPS`r`nor RTMPS will stop working." }
         @{ Mode = 'off'; Title = 'Allow all unencrypted ports';
            Body = "Everything open, encrypted and unencrypted alike. Simplest to get`r`nworking, and the weakest - avoid it on an internet-facing server." }
     )

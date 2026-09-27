@@ -228,7 +228,7 @@ running `.\ots.ps1 restart`.
 | 8089 | TCP | CoT streaming over TLS — **this is what TAK clients use** |
 | 1935 / 1936 | TCP | RTMP / RTMPS video |
 | 8554 / 8322 | TCP | RTSP / RTSPS video |
-| 8888 / 8889 | TCP | HLS / WebRTC video |
+| 8888 | TCP | HLS video |
 | 8890 | UDP | SRT video |
 | 8000 / 8001 | UDP | RTP / RTCP — media for plain RTSP |
 | 8004 / 8005 | UDP | SRTP / SRTCP — media for encrypted RTSPS |
@@ -247,6 +247,22 @@ docker compose --profile udp up -d
 
 TAK clients normally use the SSL streaming port (8089) regardless.
 
+**WebRTC video is switched off.** It gives sub-second latency in the browser and
+lets a phone stream its camera from a web page, but it needs UDP 8189 open to
+work over the internet and can fail on mobile networks. Watching in the web UI
+uses HLS instead, which works everywhere with a few seconds' delay. The web
+UI's **Copy WebRTC Link** button produces links that will not work while it is
+off. To turn it on:
+
+```bash
+docker compose exec ots sed -i "s/^webrtc: no/webrtc: yes/" /app/ots/mediamtx/mediamtx.yml
+```
+
+then set `OTS_WEBRTC_BIND=0.0.0.0` in `.env` (so ports 8889/TCP and 8189/UDP
+are reachable from the network), run `.\ots.ps1 restart`, and allow those two
+ports through Windows Firewall — and your router, for internet access. Both
+settings survive updates.
+
 ### Encryption policy
 
 Every encrypted port already presents a certificate. The catch is that some
@@ -259,7 +275,7 @@ Pick a policy with **Encryption Policy** in the manager, or:
 .\ots.ps1 tls-only [on|all|off]
 ```
 
-| Mode | 8080 / 8088 | Plain video (RTSP, RTMP, HLS, WebRTC) |
+| Mode | 8080 / 8088 | Plain video (RTSP, RTMP, HLS) |
 |---|---|---|
 | **`on`** *(recommended)* | closed | **left open** alongside RTSPS/RTMPS |
 | `all` | closed | closed — MediaMTX refuses unencrypted |

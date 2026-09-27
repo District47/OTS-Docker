@@ -933,10 +933,10 @@ switch ($Command.ToLower()) {
         Write-Host "       8089  TCP   CoT streaming (TLS)  <- clients need this"
         Write-Host "       8080  TCP   Marti over plain HTTP (unencrypted)"
         Write-Host "       8883  TCP   MQTT over TLS"
-        Write-Host "       1935,1936,8322,8554,8888,8889  TCP   video"
+        Write-Host "       1935,1936,8322,8554,8888       TCP   video"
         Write-Host "       8000,8001                      UDP   video (plain RTSP media)"
         Write-Host "       8004,8005                      UDP   video (encrypted RTSPS media)"
-        Write-Host "       8189,8890                      UDP   video (WebRTC, SRT)"
+        Write-Host "       8890                           UDP   video (SRT)"
         Write-Host ""
         Write-Host "     Give this machine a DHCP reservation too, or the LAN IP will"
         Write-Host "     change and every forward will point at nothing."
@@ -1077,7 +1077,6 @@ switch ($Command.ToLower()) {
             @{ Port = (Get-EnvValue 'VIDEO_RTMP_PORT' '1935');   Name = 'RTMP video'; Instead = "$(Get-EnvValue 'VIDEO_RTMPS_PORT' '1936') (RTMPS)" }
             @{ Port = (Get-EnvValue 'VIDEO_RTSP_PORT' '8554');   Name = 'RTSP video'; Instead = "$(Get-EnvValue 'VIDEO_RTSPS_PORT' '8322') (RTSPS)" }
             @{ Port = (Get-EnvValue 'VIDEO_HLS_PORT' '8888');    Name = 'HLS video'; Instead = 'https://<server>/hls' }
-            @{ Port = (Get-EnvValue 'VIDEO_WEBRTC_PORT' '8889'); Name = 'WebRTC video'; Instead = 'https://<server>/webrtc' }
         )
 
         # -------------------------------------------------------------------

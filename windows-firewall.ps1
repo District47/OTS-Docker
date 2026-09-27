@@ -86,14 +86,17 @@ $videoRules = @(
     @{ Name = 'Video RTSPS';      Port = 8322; Protocol = 'TCP' }
     @{ Name = 'Video RTSP';       Port = 8554; Protocol = 'TCP' }
     @{ Name = 'Video HLS';        Port = 8888; Protocol = 'TCP' }
-    @{ Name = 'Video WebRTC';     Port = 8889; Protocol = 'TCP' }
     @{ Name = 'Video RTP';        Port = 8000; Protocol = 'UDP' }
     @{ Name = 'Video RTCP';       Port = 8001; Protocol = 'UDP' }
     @{ Name = 'Video SRTP';       Port = 8004; Protocol = 'UDP' }
     @{ Name = 'Video SRTCP';      Port = 8005; Protocol = 'UDP' }
-    @{ Name = 'Video WebRTC ICE'; Port = 8189; Protocol = 'UDP' }
     @{ Name = 'Video SRT';        Port = 8890; Protocol = 'UDP' }
 )
+
+# Rules earlier versions created for services that are now switched off.
+# Re-running this script removes them, so no port stays open for nothing.
+# (WebRTC is disabled in MediaMTX - see the README's Ports section.)
+$retiredRules = @('Video WebRTC', 'Video WebRTC ICE')
 
 if ($Video) { $rules += $videoRules }
 
@@ -129,6 +132,14 @@ if ($Profile -eq 'Public' -or $Profile -eq 'Any') {
     Write-Warn "including untrusted public Wi-Fi. Use -Profile Private if this"
     Write-Warn "server only needs to work on your own network."
     Write-Host ""
+}
+
+foreach ($name in $retiredRules) {
+    $old = Get-NetFirewallRule -DisplayName "$prefix - $name" -ErrorAction SilentlyContinue
+    if ($old) {
+        $old | Remove-NetFirewallRule
+        Write-Ok "removed retired rule: $prefix - $name"
+    }
 }
 
 foreach ($rule in $rules) {
