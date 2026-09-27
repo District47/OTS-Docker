@@ -2,7 +2,7 @@
 #   Web UI - HTTPS
 #   Port: 443
 #
-#   This is the only listener that can use a Let's Encrypt certificate.
+#   Uses Let's Encrypt when it is set up (as does enrollment on 8446).
 #   The include below is written at container start by
 #   15-ots-tls-mode.sh, based on OTS_TLS_MODE.
 #******************************************************

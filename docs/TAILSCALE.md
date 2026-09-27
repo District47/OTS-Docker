@@ -137,11 +137,12 @@ and signed by its own CA, so no hostname matches it — over Tailscale, on a LAN
 or anywhere else. TAK clients validate against the CA in the truststore rather
 than the hostname, so this does not affect them.
 
-If the warning bothers you, Tailscale can issue a real certificate for your
-`.ts.net` name with `tailscale cert` once HTTPS is enabled in the Tailscale
-admin console. That is cosmetic — TAK clients still need the OpenTAKServer
-truststore either way, because client-certificate authentication requires both
-ends to belong to the same PKI.
+Tailscale can issue a real certificate for your `.ts.net` name with
+`tailscale cert` once HTTPS is enabled in the Tailscale admin console (the name
+then appears in public certificate-transparency logs). In principle that would
+let phones enrol by QR code without a trust store, as the Let's Encrypt route
+does — but this setup does not wire a Tailscale certificate in, so over
+Tailscale, clients import the trust store as described above.
 
 **Windows Firewall**
 

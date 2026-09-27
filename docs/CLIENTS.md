@@ -6,57 +6,109 @@ The recommended path is **certificate enrollment**: the client asks the server
 for its own certificate using a username and password, and everything after
 that is automatic. You do not have to build data packages by hand.
 
+The manager's **4. Connect a TAK Client** button shows everything below with
+your server's real address filled in, and picks the right method for your
+setup automatically.
+
 ---
 
 ## 1. Create a user
 
 In the web UI (`https://<your-server>`), go to **Users** and add an account for
-each device. Do not hand out the `administrator` account.
+each device. Do not hand out the `administrator` account. Make sure the account
+is **active** — enrollment fails for inactive accounts.
 
-## 2. Download the truststore — required, always
+## 2. Which method? It depends on your certificate
 
-This step is not optional, and it is not only for self-signed setups.
+Before a phone will send its username and password to the enrollment port
+(8446), it has to trust the certificate that port presents.
 
-Even with Let's Encrypt, **the TAK ports keep using OpenTAKServer's own
-certificate authority**. Only the web UI on port 443 uses the public
-certificate. Enrollment (8446), the Marti API (8443) and CoT streaming (8089)
-all present the private CA, because TAK client-certificate authentication
-requires both ends to belong to the same PKI.
+| Your setup | Enrollment port presents | What the phone needs |
+|---|---|---|
+| **Let's Encrypt** (after `go-public` + `cert-request`) | a public certificate phones already trust | **nothing** — scan a QR code, or enter the server by hand with default settings |
+| **Self-signed** (LAN, Tailscale, or Let's Encrypt not issued yet) | OpenTAKServer's private certificate authority | **the trust store**, imported first |
 
-Skip this and ATAK will refuse to connect with *"The TAK Server's identity
-could not be verified"*.
+Either way, once enrollment succeeds the server hands the phone its
+certificate authority, which is what the phone uses to trust the streaming
+port (8089) from then on.
 
-Clients need a copy of that certificate authority before they will trust it:
+Not sure which you have? Run `.\ots.ps1 truststore` — with Let's Encrypt active
+it tells you no trust store is needed instead of downloading one.
 
-* In the web UI, click **Download Truststore**, or
-* browse to `https://<your-server>/api/truststore`
+---
 
-The truststore password is **`atakatak`**.
+## With Let's Encrypt: QR code (easiest)
 
-Copy that file to the device — for Android, anywhere you can browse to, such as
-`Download`.
+1. On a computer, open the web UI at **your public name** —
+   `https://yourname.duckdns.org`, **not** `https://localhost`. The QR code
+   contains whatever address you opened the page with.
+2. Log in **as the person who will use the phone** (a QR code enrols the
+   account that generated it).
+3. In the left menu, click **ATAK QR Code**.
+4. In ATAK, add a server using its QR scan option and scan the code.
 
-## 3. Add the server in ATAK
+The code contains the address, the username and a one-time token instead of the
+password, and the web UI lets you set when it expires.
+
+## With Let's Encrypt: by hand
 
 1. Hamburger icon (top right) → **Settings**
 2. **Network Preferences** → **TAK Servers**
 3. Three-dot menu → **Add**
 4. Fill in:
    * **Description** — any name you like
-   * **Address** — your server's IP or domain
+   * **Address** — your public name, e.g. `yourname.duckdns.org`
    * **Port** — `8089`
    * **Streaming Protocol** — `SSL`
-5. Check **Use Authentication**, then enter the username and password from step 1
+5. Check **Use Authentication** and enter the username and password
 6. Check **Enroll for Client Certificate**
-7. Then, **in every configuration** — self-signed or Let's Encrypt:
+7. **Leave "Use default SSL/TLS Certificates" checked.** Do not import a trust
+   store — it would make ATAK trust *only* the private authority and reject the
+   public certificate on the enrollment port.
+8. Tap **Ok**
+
+---
+
+## Self-signed: import the trust store first — required
+
+Without it, ATAK refuses to connect with *"The TAK Server's identity could not
+be verified"*.
+
+**Get the trust store:**
+
+* on the device, browse to `https://<your-server>/api/truststore`, or
+* in the web UI, click **Download Truststore**, or
+* on the server, run `.\ots.ps1 truststore`
+
+The password is **`atakatak`**. On Android, save it anywhere you can browse to,
+such as `Download`.
+
+**Add the server in ATAK:**
+
+1. Hamburger icon (top right) → **Settings**
+2. **Network Preferences** → **TAK Servers**
+3. Three-dot menu → **Add**
+4. Fill in:
+   * **Description** — any name you like
+   * **Address** — your server's IP, Tailscale name, or domain
+   * **Port** — `8089`
+   * **Streaming Protocol** — `SSL`
+5. Check **Use Authentication**, then enter the username and password
+6. Check **Enroll for Client Certificate**
+7. Then:
    * uncheck **Use default SSL/TLS Certificates**
    * make sure **Enroll with Preconfigured Trust** is checked
-   * tap **Import Trust Store**, pick the file from step 2, and enter `atakatak`
+   * tap **Import Trust Store**, pick the file, and enter `atakatak`
 8. Tap **Ok**
 
 > Ticking **Enroll for Client Certificate** is not enough on its own.
 > Enrollment itself happens over TLS, so the trust has to be in place before
 > enrollment can even begin.
+
+QR codes do not work on a self-signed server: a phone scanning one has no trust
+store yet, so it has no way to trust the private certificate.
+
+---
 
 The client enrols over port **8446**, receives its certificate, and connects on
 port **8089**. You should see it appear under **EUDs** in the web UI within a
@@ -66,13 +118,8 @@ few seconds.
 
 The same fields, in slightly different places — add a server, choose the SSL
 protocol on port 8089, supply the username and password, and enable certificate
-enrollment. Import the truststore when using the self-signed certificate.
-
-## QR codes
-
-ATAK 1.5.0 and newer can be enrolled by scanning a QR code from the web UI.
-This only works when the server uses a **Let's Encrypt** certificate — a
-self-signed server cannot be trusted from a bare link.
+enrollment. Import the truststore only on a self-signed server. The web UI also
+has an **iTAK QR Code** item.
 
 ---
 
@@ -87,27 +134,24 @@ See [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 **"The TAK Server's identity could not be verified"**
 
-This is the most common failure, and it is always the same cause: the trust
-store was not imported, so ATAK has never seen the certificate authority that
-signed your server's certificate.
+The phone does not trust the enrollment port's certificate. Which fix depends
+on your setup:
 
-On the server:
+* **Self-signed:** the trust store was not imported. Follow the self-signed
+  steps above — uncheck "Use default SSL/TLS Certificates", check "Enroll with
+  Preconfigured Trust", and use **Import Trust Store** (password `atakatak`).
+* **Let's Encrypt:** the opposite — a trust store *was* imported, so ATAK only
+  trusts the private authority. Delete the server entry and add it again with
+  "Use default SSL/TLS Certificates" left checked and no trust store.
 
-```bash
-.\ots.ps1 truststore
-```
+**The QR code enrols, then points at "localhost"**
 
-or on the device itself, open `https://<your-server>/api/truststore`. The
-password is `atakatak`.
-
-Then on the server entry in ATAK: **uncheck** "Use default SSL/TLS
-Certificates", **check** "Enroll with Preconfigured Trust", and use **Import
-Trust Store**. Ticking "Enroll for Client Certificate" alone is not enough —
-enrollment itself happens over TLS, so the trust has to be in place first.
+The web UI was opened at `https://localhost` when the code was generated. Open
+it at your public name and generate the code again.
 
 **"Invalid certificate" or the client rejects the server**
 
-Same cause as above, or the trust store was imported with the wrong password
+Same causes as above, or the trust store was imported with the wrong password
 (it is `atakatak`).
 
 **Enrollment succeeds but no data flows**

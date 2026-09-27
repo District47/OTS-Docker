@@ -77,7 +77,7 @@ Both `.cmd` files also clear the mark themselves, so step 2 is belt-and-braces
 | **1. Install WSL + Docker** | Installs WSL and Docker Desktop for you — whichever is missing. Skips itself if both are there. |
 | **2. Start Docker Desktop** | Launches Docker and waits for its engine to come up. |
 | **3. Build and Install Server** | Generates secure passwords, detects your network address, downloads the images, builds, and starts everything. |
-| **4. Connect a TAK Client** | The exact ATAK settings, the trust store, and which accounts can enrol. |
+| **4. Connect a TAK Client** | The exact ATAK settings — QR code or trust store, whichever your setup needs — and which accounts can enrol. |
 | **5. Port Forwarding Help** | Only if you want internet access. Builds a prompt describing your router, ISP and exact ports, to paste into Claude or ChatGPT. |
 
 Step 0 is worth the ten seconds. The one thing no installer can fix —
@@ -356,9 +356,10 @@ Two things worth knowing before you start:
 * **The default password must go first.** Every install ships with
   `administrator` / `password`; internet-facing servers with it are found and
   taken over quickly. `go-public` refuses to run until you have changed it.
-* **Only the web UI uses the Let's Encrypt certificate.** The TAK ports keep
-  using the OpenTAKServer CA, because TAK clients authenticate with client
-  certificates issued by that CA and would reject anything else.
+* **With Let's Encrypt, clients no longer need the trust store.** The web UI
+  and certificate enrollment (8446) present the public certificate, so phones
+  can enrol by scanning the **ATAK QR Code** from the web UI. The Marti API and
+  MQTT keep the OpenTAKServer CA, because they check client certificates.
 
 ---
 

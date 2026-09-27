@@ -5,6 +5,11 @@
 #   TAK clients hit this port with a username and password to be issued a
 #   client certificate. No client certificate is required (that is the whole
 #   point), so only the enrollment endpoint is exposed.
+#
+#   The certificate is chosen by 15-ots-tls-mode.sh: Let's Encrypt when it is
+#   in use - so QR-code enrollment works without a trust store - otherwise the
+#   OpenTAKServer certificate. Nothing here verifies client certificates, so
+#   the OpenTAKServer CA is not needed on this port.
 #******************************************************
 server {
     listen 8446 ssl;
@@ -17,7 +22,7 @@ server {
 
     client_max_body_size ${CLIENT_MAX_BODY_SIZE};
 
-    include includes.d/tak_certificate;
+    include includes.d/enrollment_certificate;
 
     location / {
         return 403;

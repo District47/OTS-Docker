@@ -978,6 +978,10 @@ switch ($Command.ToLower()) {
         Invoke-Compose @('--profile', 'public', 'up', '-d')
         Invoke-Compose @('restart', 'nginx')
         Write-Ok "Done. Make sure OTS_TLS_MODE=letsencrypt is set in .env."
+        Write-Host ""
+        Write-Host "    The web UI and certificate enrollment (8446) now use this certificate,"
+        Write-Host "    so TAK clients no longer need the trust store - and can enrol by QR"
+        Write-Host "    code: open https://$fqdn, log in, click 'ATAK QR Code'."
     }
 
     'tls-only' {
@@ -1271,6 +1275,25 @@ switch ($Command.ToLower()) {
 
         $fqdn = Get-EnvValue 'OTS_FQDN'
         if (-not $fqdn -or $fqdn -eq '_') { $fqdn = 'localhost' }
+
+        # With Let's Encrypt on the enrollment port, clients do not need this
+        # file at all - and importing it would make ATAK reject that port.
+        $inc = Invoke-Native { & docker compose exec -T nginx cat /etc/nginx/includes.d/enrollment_certificate 2>$null }
+        if (($inc | Out-String) -match '/etc/letsencrypt/') {
+            Write-Step "No trust store needed"
+            Write-Ok "Enrollment uses your Let's Encrypt certificate, which phones already trust."
+            Write-Host ""
+            Write-Host "  Easiest: open https://$fqdn in a browser, log in as the phone's user,"
+            Write-Host "  click 'ATAK QR Code' in the left menu, and scan it in ATAK."
+            Write-Host ""
+            Write-Host "  By hand: address $fqdn, port $(Get-EnvValue 'OTS_SSL_COT_PORT' '8089'), SSL. LEAVE"
+            Write-Host "  'Use default SSL/TLS Certificates' checked, and CHECK 'Use Authentication'"
+            Write-Host "  and 'Enroll for Client Certificate'."
+            Write-Host ""
+            Write-Warn "Do NOT import a trust store on these clients - ATAK would then reject"
+            Write-Warn "the public certificate on the enrollment port."
+            exit 0
+        }
 
         Write-Step "Downloading the truststore"
         Write-Host "    TAK clients need this to trust your server's certificate authority."

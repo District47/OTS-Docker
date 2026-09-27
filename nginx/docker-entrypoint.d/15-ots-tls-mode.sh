@@ -1,9 +1,16 @@
 #!/usr/bin/env sh
 # ============================================================================
-#  Decides which certificate the web UI (port 443) presents, and makes sure
-#  the OpenTAKServer CA exists before nginx tries to load it.
+#  Decides which certificate the web UI (443) and certificate enrollment
+#  (8446) present, and makes sure the OpenTAKServer CA exists before nginx
+#  tries to load it.
 #
-#  The TAK ports always use the OpenTAKServer CA - see includes/tak_certificate.
+#  With Let's Encrypt, both get the public certificate. For 8446 that is what
+#  makes ATAK's QR-code enrollment work: a phone scanning a QR code has no
+#  trust store yet, so it can only trust a publicly issued certificate. The
+#  enrollment reply then hands the phone the OpenTAKServer CA, which is what
+#  it trusts 8089 with from then on.
+#
+#  8443 and 8883 always use the OpenTAKServer CA - see includes/tak_certificate.
 # ============================================================================
 set -e
 
@@ -37,23 +44,28 @@ if [ ! -f "$OTS_CERT" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Web UI certificate
+# Web UI (443) and enrollment (8446) certificates
 # ---------------------------------------------------------------------------
 if [ "$OTS_TLS_MODE" = "letsencrypt" ] && [ -f "${LE_DIR}/fullchain.pem" ]; then
-    echo "$ME: web UI is using the Let's Encrypt certificate for ${OTS_FQDN}"
-    cat > "$INCLUDE_DIR/webui_certificate" <<EOF
-ssl_certificate     ${LE_DIR}/fullchain.pem;
-ssl_certificate_key ${LE_DIR}/privkey.pem;
-EOF
+    echo "$ME: web UI and enrollment (8446) use the Let's Encrypt certificate for ${OTS_FQDN}"
+    echo "$ME: QR-code enrollment is available; clients do not need the trust store"
+    CERT="${LE_DIR}/fullchain.pem"
+    KEY="${LE_DIR}/privkey.pem"
 else
     if [ "$OTS_TLS_MODE" = "letsencrypt" ]; then
         echo "$ME: OTS_TLS_MODE=letsencrypt but no certificate exists at ${LE_DIR}."
         echo "$ME: Falling back to the OpenTAKServer CA. Issue one with: .\\ots.ps1 cert-request"
     else
-        echo "$ME: web UI is using the self-signed OpenTAKServer certificate"
+        echo "$ME: web UI and enrollment use the self-signed OpenTAKServer certificate"
     fi
-    cat > "$INCLUDE_DIR/webui_certificate" <<EOF
-ssl_certificate     ${OTS_CERT};
-ssl_certificate_key ${OTS_KEY};
-EOF
+    echo "$ME: clients must import the trust store before enrolling"
+    CERT="${OTS_CERT}"
+    KEY="${OTS_KEY}"
 fi
+
+for name in webui_certificate enrollment_certificate; do
+    cat > "$INCLUDE_DIR/$name" <<EOF
+ssl_certificate     ${CERT};
+ssl_certificate_key ${KEY};
+EOF
+done

@@ -875,11 +875,23 @@ function Get-OtsUsers {
     return $out
 }
 
+function Test-PublicEnrollmentCert {
+    <#  True when enrollment (8446) is actually serving the Let's Encrypt
+        certificate. Asks nginx rather than trusting .env: OTS_TLS_MODE can say
+        letsencrypt while no certificate has been issued yet, and then nginx
+        falls back to the self-signed one. #>
+    try {
+        $inc = & docker compose exec -T nginx cat /etc/nginx/includes.d/enrollment_certificate 2>$null
+        return (($inc | Out-String) -match '/etc/letsencrypt/')
+    } catch { return $false }
+}
+
 function Show-ClientSetup {
     $fqdn = Get-EnvValue 'OTS_FQDN'
     if (-not $fqdn -or $fqdn -eq '_') { $fqdn = (Get-LanAddressGui) }
     $caPw = Get-EnvValue 'OTS_CA_PASSWORD' 'atakatak'
     $port = Get-EnvValue 'OTS_SSL_COT_PORT' '8089'
+    $public = Test-PublicEnrollmentCert
 
     $dlg = New-Object System.Windows.Forms.Form
     $dlg.Text = 'Connect a TAK client'
@@ -901,33 +913,57 @@ function Show-ClientSetup {
     }
     $script:cy = $y
 
-    Add-Text 'Step 1 - settings to enter in ATAK' 24 $ColAccent $FontBold
-    Add-Text "    Address   $fqdn" 20 $ColText $FontMono
-    Add-Text "    Port      $port" 20 $ColText $FontMono
-    Add-Text "    Protocol  SSL" 20 $ColText $FontMono
-    $script:cy += 8
+    if ($public) {
+        # Enrollment presents Let's Encrypt, which Android already trusts, and
+        # the enrollment reply hands the phone the OpenTAKServer CA for 8089.
+        Add-Text "Let's Encrypt is active - no trust store needed." 24 $ColOk $FontBold
+        $script:cy += 4
+        Add-Text 'Easiest - scan a QR code' 24 $ColAccent $FontBold
+        Add-Text "    1.  On a computer, open  https://$fqdn" 20 $ColText $FontMono
+        Add-Text '        and log in as the person who will use the phone.' 20 $ColText $FontMono
+        Add-Text '    2.  In the left menu, click  "ATAK QR Code".' 20 $ColText $FontMono
+        Add-Text '    3.  In ATAK, add a server with its QR scan option.' 20 $ColText $FontMono
+        Add-Text "Open the web UI at $fqdn, not localhost - the QR code contains" 20 $ColWarn
+        Add-Text 'whatever address you opened it with.' 20 $ColWarn
+        $script:cy += 10
 
-    Add-Text 'Step 2 - import the trust store (this is not optional)' 24 $ColAccent $FontBold
-    Add-Text 'Without it ATAK reports "The TAK Server''s identity could not be' 20 $ColWarn
-    Add-Text 'verified" and will not connect - even with a Let''s Encrypt setup,' 20 $ColWarn
-    Add-Text 'because the TAK ports always use OpenTAKServer''s own CA.' 20 $ColWarn
-    $script:cy += 6
-    Add-Text "    On the device, open:  https://$fqdn/api/truststore" 20 $ColText $FontMono
-    Add-Text "    Trust store password: $caPw" 20 $ColText $FontMono
-    $script:cy += 10
+        Add-Text 'Or enter it by hand' 24 $ColAccent $FontBold
+        Add-Text "    Address  $fqdn     Port  $port     Protocol  SSL" 20 $ColText $FontMono
+        Add-Text '    LEAVE    Use default SSL/TLS Certificates  checked' 20 $ColText $FontMono
+        Add-Text '    CHECK    Use Authentication  (username + password)' 20 $ColText $FontMono
+        Add-Text '    CHECK    Enroll for Client Certificate' 20 $ColText $FontMono
+        Add-Text 'Do NOT import the trust store here - it would make ATAK reject the' 20 $ColMuted
+        Add-Text 'public certificate on the enrollment port.' 20 $ColMuted
+        $script:cy += 10
+    } else {
+        Add-Text 'Step 1 - settings to enter in ATAK' 24 $ColAccent $FontBold
+        Add-Text "    Address   $fqdn" 20 $ColText $FontMono
+        Add-Text "    Port      $port" 20 $ColText $FontMono
+        Add-Text "    Protocol  SSL" 20 $ColText $FontMono
+        $script:cy += 8
 
-    Add-Text 'Step 3 - tick these, in this order' 24 $ColAccent $FontBold
-    Add-Text '    1.  UNCHECK  Use default SSL/TLS Certificates' 20 $ColText $FontMono
-    Add-Text '    2.  CHECK    Enroll with Preconfigured Trust' 20 $ColText $FontMono
-    Add-Text '    3.  Import Trust Store  ->  the .p12 from step 2' 20 $ColText $FontMono
-    Add-Text '    4.  CHECK    Use Authentication  (username + password)' 20 $ColText $FontMono
-    Add-Text '    5.  CHECK    Enroll for Client Certificate' 20 $ColText $FontMono
-    $script:cy += 4
-    Add-Text 'Enrollment itself runs over TLS, so the trust must exist first.' 20 $ColMuted
-    $script:cy += 10
+        Add-Text 'Step 2 - import the trust store (this is not optional)' 24 $ColAccent $FontBold
+        Add-Text 'Without it ATAK reports "The TAK Server''s identity could not be' 20 $ColWarn
+        Add-Text 'verified" and will not connect. This server uses its own private' 20 $ColWarn
+        Add-Text 'certificate authority, which phones do not trust by default.' 20 $ColWarn
+        $script:cy += 6
+        Add-Text "    On the device, open:  https://$fqdn/api/truststore" 20 $ColText $FontMono
+        Add-Text "    Trust store password: $caPw" 20 $ColText $FontMono
+        $script:cy += 10
+
+        Add-Text 'Step 3 - tick these, in this order' 24 $ColAccent $FontBold
+        Add-Text '    1.  UNCHECK  Use default SSL/TLS Certificates' 20 $ColText $FontMono
+        Add-Text '    2.  CHECK    Enroll with Preconfigured Trust' 20 $ColText $FontMono
+        Add-Text '    3.  Import Trust Store  ->  the .p12 from step 2' 20 $ColText $FontMono
+        Add-Text '    4.  CHECK    Use Authentication  (username + password)' 20 $ColText $FontMono
+        Add-Text '    5.  CHECK    Enroll for Client Certificate' 20 $ColText $FontMono
+        $script:cy += 4
+        Add-Text 'QR-code enrollment needs a Let''s Encrypt certificate - see docs\INTERNET.md.' 20 $ColMuted
+        $script:cy += 10
+    }
 
     # ---- accounts -------------------------------------------------------
-    Add-Text 'Step 4 - the account to enrol with' 24 $ColAccent $FontBold
+    Add-Text 'The account to enrol with' 24 $ColAccent $FontBold
     $users = Get-OtsUsers
     if ($users.Count -eq 0) {
         Add-Text '    (could not read the user list - is the server running?)' 20 $ColMuted
@@ -947,20 +983,38 @@ function Show-ClientSetup {
     # ---- buttons --------------------------------------------------------
     $by = 570
     $b1 = New-Object System.Windows.Forms.Button
-    $b1.Text = 'Download trust store here'
     $b1.Size = New-Object System.Drawing.Size(210, 34)
     $b1.Location = New-Object System.Drawing.Point(20, $by)
     $b1.FlatStyle = 'Flat'; $b1.BackColor = $ColPanel; $b1.ForeColor = $ColText
-    $b1.Add_Click({ $dlg.Close(); $script:ClientAction = 'truststore' })
+    if ($public) {
+        $b1.Text = 'Open web UI (for the QR code)'
+        $b1.Add_Click({ $dlg.Close(); $script:ClientAction = 'webui' })
+    } else {
+        $b1.Text = 'Download trust store here'
+        $b1.Add_Click({ $dlg.Close(); $script:ClientAction = 'truststore' })
+    }
     $dlg.Controls.Add($b1)
 
-    $b2 = New-Object System.Windows.Forms.Button
-    $b2.Text = 'Copy these settings'
-    $b2.Size = New-Object System.Drawing.Size(170, 34)
-    $b2.Location = New-Object System.Drawing.Point(240, $by)
-    $b2.FlatStyle = 'Flat'; $b2.BackColor = $ColPanel; $b2.ForeColor = $ColText
-    $b2.Add_Click({
-        $txt = @"
+    if ($public) {
+        $copyText = @"
+TAK client setup
+
+EASIEST - QR code:
+  1. Open https://$fqdn in a browser and log in as the phone's user
+  2. Left menu -> "ATAK QR Code"
+  3. In ATAK, add a server with its QR scan option
+
+OR by hand:
+  Address   $fqdn
+  Port      $port
+  Protocol  SSL
+  LEAVE  Use default SSL/TLS Certificates  checked
+  CHECK  Use Authentication (username + password)
+  CHECK  Enroll for Client Certificate
+  No trust store needed.
+"@
+    } else {
+        $copyText = @"
 TAK client setup
 
 Address   $fqdn
@@ -977,7 +1031,15 @@ In ATAK:
   4. CHECK    Use Authentication (username + password)
   5. CHECK    Enroll for Client Certificate
 "@
-        try { [System.Windows.Forms.Clipboard]::SetText($txt); $b2.Text = 'Copied' } catch { }
+    }
+
+    $b2 = New-Object System.Windows.Forms.Button
+    $b2.Text = 'Copy these settings'
+    $b2.Size = New-Object System.Drawing.Size(170, 34)
+    $b2.Location = New-Object System.Drawing.Point(240, $by)
+    $b2.FlatStyle = 'Flat'; $b2.BackColor = $ColPanel; $b2.ForeColor = $ColText
+    $b2.Add_Click({
+        try { [System.Windows.Forms.Clipboard]::SetText(($copyText -replace "`r?`n", "`r`n")); $b2.Text = 'Copied' } catch { }
     })
     $dlg.Controls.Add($b2)
 
@@ -1438,12 +1500,19 @@ Add-ActionButton '4. Connect a TAK Client' {
             -CommandArgs @('truststore') -Verify {
             param($exit)
             if ($exit -ne 0) { return @{ Ok = $false; Message = 'Could not download it - see the output above.' } }
+            if (Test-PublicEnrollmentCert) { return @{ Ok = $true; Message = 'Not needed - Let''s Encrypt is active. Use the ATAK QR Code in the web UI.' } }
             $f = Get-ChildItem $Root -Filter 'truststore-*.p12' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
             if ($f) { @{ Ok = $true; Message = "Saved $($f.Name) - copy it to the device and import it (password atakatak)." } }
             else { @{ Ok = $false; Message = 'No trust store file was created.' } }
         } | Out-Null
+    } elseif ($action -eq 'webui') {
+        # The QR code embeds the address the browser used, so it must be the
+        # public name - never localhost.
+        $fqdn = Get-EnvValue 'OTS_FQDN'
+        Start-Process "https://$fqdn"
+        Set-Banner "Opened https://$fqdn - log in as the phone's user, then click ""ATAK QR Code""." 'idle'
     } else {
-        Set-Banner 'Client settings shown. The trust store step is required, not optional.' 'idle'
+        Set-Banner 'Client settings shown.' 'idle'
     }
 } 'Exact ATAK settings, the trust store, and which account to use'
 
@@ -1720,6 +1789,7 @@ Add-ActionButton 'Get Client Trust Store' {
         -CommandArgs @('truststore') -Verify {
         param($exit)
         if ($exit -ne 0) { return @{ Ok = $false; Message = 'Could not download it - see the output above.' } }
+        if (Test-PublicEnrollmentCert) { return @{ Ok = $true; Message = 'Not needed - Let''s Encrypt is active. Use the ATAK QR Code in the web UI.' } }
         $f = Get-ChildItem $Root -Filter 'truststore-*.p12' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
         if ($f) { @{ Ok = $true; Message = "Saved $($f.Name) - import it into each TAK client (password atakatak)." } }
         else { @{ Ok = $false; Message = 'No trust store file was created.' } }

@@ -193,19 +193,31 @@ docker compose exec certbot certbot certificates
 
 ## What clients use
 
-Your TAK clients now use `yoursubdomain.duckdns.org` instead of a LAN IP.
-Certificate enrollment on 8446 and streaming on 8089 work exactly as before —
-see [CLIENTS.md](CLIENTS.md).
+Your TAK clients now use `yoursubdomain.duckdns.org` instead of a LAN IP — see
+[CLIENTS.md](CLIENTS.md).
 
-One difference worth knowing: with Let's Encrypt, **the web UI** uses the
-public certificate, but the **TAK ports keep using OpenTAKServer's own CA**.
-That is deliberate and required — TAK clients authenticate with client
-certificates issued by that CA, so both ends of the handshake must belong to
-the same PKI. It also means clients still import the truststore exactly as they
-did on the LAN.
+**The big upside: clients no longer need the trust store.** Once
+`cert-request` succeeds, the web UI (443) **and certificate enrollment (8446)**
+present the Let's Encrypt certificate, which every phone already trusts. So:
 
-The upside of a real certificate: ATAK 1.5.0+ QR code enrollment starts
-working, which needs a publicly trusted certificate.
+* **QR codes work.** Open `https://yoursubdomain.duckdns.org` (the public
+  name, not `localhost` — the code contains the address you used), log in as
+  the phone's user, click **ATAK QR Code**, and scan it in ATAK.
+* **By hand**, leave *Use default SSL/TLS Certificates* checked and skip the
+  trust store entirely.
+
+Enrollment hands the phone OpenTAKServer's certificate authority, which it then
+uses for streaming on 8089.
+
+What does *not* change: the **Marti API (8443) and MQTT (8883) keep using
+OpenTAKServer's own CA**. Those ports check client certificates issued by that
+CA, so the server side of the handshake has to belong to the same PKI.
+
+> **Clients set up before the certificate was issued** imported the trust
+> store, which makes ATAK trust *only* the private CA — they will now fail on
+> 8446 with "identity could not be verified". Already-enrolled clients keep
+> working on 8089; only re-enrolling is affected. To re-enrol, delete the
+> server entry and add it again without the trust store.
 
 ---
 
