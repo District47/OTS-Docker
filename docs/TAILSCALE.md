@@ -44,7 +44,11 @@ The two can coexist: Tailscale does not stop port forwarding from working.
 
 ### 1. On the server
 
-Install Tailscale and sign in:
+**Easiest:** press **Use Tailscale (no ports)** in the manager. If Tailscale
+is missing it installs it for you (winget, or the signed MSI from tailscale.com
+as a fallback), opens the sign-in, and on the next press does everything below.
+
+**By hand:** install Tailscale and sign in:
 
 ```bash
 winget install -e --id Tailscale.Tailscale

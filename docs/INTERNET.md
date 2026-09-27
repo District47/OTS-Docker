@@ -80,7 +80,7 @@ Non-interactive form:
 
 This is the part only you can do, and every router's menus are different.
 
-**Shortcut:** press **4. Port Forwarding Help** in the manager. It builds a
+**Shortcut:** press **5. Port Forwarding Help** in the manager. It builds a
 prompt describing your router model, ISP, LAN address and the exact ports —
 already filled in from your configuration — ready to paste into Claude or
 ChatGPT, which can then walk you through your specific router's screens. It

@@ -69,6 +69,38 @@ That affects only the window you type it in and resets when you close it.
 Start Docker Desktop and wait for *Engine running* in the bottom-left corner.
 On a fresh install it may ask to enable WSL 2 and reboot.
 
+The very first start also opens Docker's licence agreement, and the engine
+does not start until you accept it. Look for the Docker Desktop window — it may
+be behind the manager.
+
+### Docker Desktop: "An unexpected error occurred" … "The file cannot be accessed by the system"
+
+```
+starting services: initializing Ingest server: listening on unix://C:/Users/<you>/AppData/Local/Docker/run/sailor-ingest.sock:
+rename ...sailor-ingest.sock ...sailor-ingest.sock.stale: The file cannot be accessed by the system.
+```
+
+(or the same with `docker-secrets-engine\engine.sock`). This is a Docker Desktop
+problem, not this project. When Docker Desktop is closed uncleanly — a crash, a
+forced shutdown, sleep at the wrong moment — it leaves socket files behind that
+Windows then refuses to open, and the next start trips over them.
+
+**Fix: restart Windows**, then start Docker Desktop again. That releases the
+files.
+
+If you can't restart right now: quit Docker Desktop (the **Quit** button on the
+error), then in PowerShell move the affected folder aside — renaming works even
+though the files inside can't be opened or deleted — and start Docker again:
+
+```bash
+Rename-Item "$env:LOCALAPPDATA\Docker\run" "run.old"
+Rename-Item "$env:LOCALAPPDATA\docker-secrets-engine" "docker-secrets-engine.old"
+```
+
+Docker recreates both. Delete the `.old` folders after your next restart.
+Avoid **Reset to factory defaults** for this — it wipes all your Docker data
+and is not needed.
+
 ### WSL and virtualization
 
 Docker Desktop runs Linux containers inside WSL 2. Two things underneath it
@@ -96,11 +128,11 @@ On a laptop that has never run a VM, this is very often the culprit.
 
 **"WSL is not installed or not enabled"**
 
-Docker Desktop's installer normally handles this. If it did not, open
-PowerShell **as Administrator** and run:
+Press **1. Install WSL + Docker** in the manager — it installs WSL for you.
+By hand: open PowerShell **as Administrator** and run:
 
 ```bash
-wsl --install
+wsl --install --no-distribution
 ```
 
 then restart Windows. If WSL is installed but old:

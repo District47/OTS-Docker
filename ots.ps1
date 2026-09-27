@@ -407,14 +407,16 @@ switch ($Command.ToLower()) {
                 Write-Ok "WSL default version: 2"
             }
         } else {
-            Write-Err "WSL is not installed or not enabled ($($wsl.Detail))."
-            Write-Host "      Docker Desktop's installer usually enables it for you. If it does not,"
-            Write-Host "      open PowerShell as Administrator and run:"
+            # Not blocking: unlike virtualization, this is fixable from Windows,
+            # and step 1 of the manager does it.
+            Write-Warn "WSL is not installed or not enabled yet ($($wsl.Detail))."
+            Write-Host "      That is fine - '1. Install WSL + Docker' in the manager installs it."
+            Write-Host "      From a command line instead: open PowerShell as Administrator, run"
             Write-Host ""
-            Write-Host "          wsl --install"
+            Write-Host "          wsl --install --no-distribution"
             Write-Host ""
             Write-Host "      then restart Windows."
-            $blocking++
+            $warnings++
         }
 
         # ---- Docker ------------------------------------------------------
@@ -1470,7 +1472,15 @@ switch ($Command.ToLower()) {
         }
 
         Write-Step "Removing containers and volumes"
-        Invoke-Compose @('down', '-v')
+        # Every profile, so the DuckDNS/certbot containers go too - left
+        # running, they would hold the certificate volumes open and those
+        # would silently survive the reset.
+        Invoke-Compose @('--profile', 'public', '--profile', 'udp', 'down', '-v', '--remove-orphans')
+        $left = @(Invoke-Native { & docker volume ls -q 2>$null } | Where-Object { $_ -like "${ProjectName}_*" })
+        if ($left.Count -gt 0) {
+            Write-Err "Some volumes could not be removed: $($left -join ', ')"
+            exit 1
+        }
         Write-Ok "Done. Run .\setup.ps1 to start fresh."
     }
 

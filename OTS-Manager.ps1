@@ -57,8 +57,27 @@ function Get-HttpStatus {
     } catch { return 0 }
 }
 
+function Update-SessionPath {
+    <#  An installer writes the new PATH to the registry, but a process that is
+        already running keeps its old copy. Without this, 'docker' is "not
+        found" right after installing Docker - until the manager is closed and
+        reopened. Every child process started from here inherits the fix. #>
+    $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $user    = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $env:Path = (@($machine, $user) | Where-Object { $_ }) -join ';'
+    # Docker Desktop's CLI folder, in case the installer has not published it.
+    $exe = Find-DockerDesktop
+    if ($exe) {
+        $bin = Join-Path (Split-Path $exe) 'resources\bin'
+        if ((Test-Path $bin) -and ($env:Path -notlike "*$bin*")) { $env:Path += ";$bin" }
+    }
+}
+
 function Test-DockerUp {
-    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return $false }
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        Update-SessionPath
+        if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return $false }
+    }
     & docker info 2>&1 | Out-Null
     return ($LASTEXITCODE -eq 0)
 }
@@ -106,9 +125,63 @@ function Test-DockerInstalled {
     return ($null -ne (Get-Command docker -ErrorAction SilentlyContinue)) -or ($null -ne (Find-DockerDesktop))
 }
 
+function Test-WslReady {
+    <#  'wsl --status' succeeds only once the WSL platform is installed and
+        enabled. On a bare machine it prints install help and fails - and on
+        some builds it waits for a keypress, hence the timeout. #>
+    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) { return $false }
+    try {
+        $p = Start-Process wsl.exe -ArgumentList '--status' -WindowStyle Hidden -PassThru
+        if (-not $p.WaitForExit(20000)) { try { $p.Kill() } catch { }; return $false }
+        return ($p.ExitCode -eq 0)
+    } catch { return $false }
+}
+
+function Wait-ProcessResponsive {
+    <#  Start-Process -Wait freezes the window for the whole of a long install.
+        This waits the same way but keeps the UI painting. #>
+    param([System.Diagnostics.Process]$Process)
+    while (-not $Process.HasExited) {
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 200
+    }
+    return $Process.ExitCode
+}
+
+function Get-VerifiedInstaller {
+    <#  Downloads an installer straight from its vendor and refuses to return
+        it unless it carries a valid Authenticode signature from that vendor.
+        Used when winget is missing or fails. #>
+    param([string]$Url, [string]$FileName, [string]$SignerPattern, [string]$Vendor)
+    $dest = Join-Path $env:TEMP $FileName
+    Remove-Item $dest -Force -ErrorAction SilentlyContinue
+    Add-Line "Downloading from $Vendor ..." $ColMuted
+    Add-Line "  $Url" $ColMuted
+    # curl.exe is built into Windows 10 1803+ and shows its own progress bar.
+    $p = Start-Process curl.exe -PassThru -ArgumentList @(
+        '-L', '--fail', '--retry', '3', '-o', "`"$dest`"", "`"$Url`"")
+    $code = Wait-ProcessResponsive $p
+    if ($code -ne 0 -or -not (Test-Path $dest)) {
+        Add-Line "[x] Download failed (curl exit code $code)." $ColErr
+        return $null
+    }
+    $sig = Get-AuthenticodeSignature $dest
+    if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch $SignerPattern) {
+        Add-Line "[x] The download is not validly signed by $Vendor - refusing to run it." $ColErr
+        Remove-Item $dest -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+    Add-Line "[ok] Downloaded $([math]::Round((Get-Item $dest).Length / 1MB)) MB, signature verified: $Vendor" $ColOk
+    return $dest
+}
+
+function Test-WingetUsable {
+    return ($null -ne (Get-Command winget -ErrorAction SilentlyContinue))
+}
+
 function Wait-ForDockerEngine {
     <#  Docker Desktop takes a while to bring the engine up after launch. #>
-    param([int]$TimeoutSec = 180)
+    param([int]$TimeoutSec = 300)
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ((Get-Date) -lt $deadline) {
         if (Test-DockerUp) { return $true }
@@ -140,7 +213,9 @@ function Test-DefaultAdminPassword {
 # ===========================================================================
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'OpenTAKServer Manager'
-$form.Size = New-Object System.Drawing.Size(1080, 740)
+# Wide enough that the header's third column (which sits to the right of the
+# button column) is not clipped - "TLS: letsencrypt, TAK encrypted" is long.
+$form.Size = New-Object System.Drawing.Size(1200, 740)
 $form.MinimumSize = New-Object System.Drawing.Size(900, 600)
 $form.StartPosition = 'CenterScreen'
 $form.BackColor = $ColBg
@@ -1135,7 +1210,7 @@ Add-ActionButton '0. Check This PC' {
     } | Out-Null
 } 'Checks Windows version, virtualization, WSL, memory and disk'
 
-Add-ActionButton '1. Install Docker Desktop' {
+Add-ActionButton '1. Install WSL + Docker' {
     # Virtualization cannot be enabled by any installer - it is a firmware
     # setting. Check before spending a long download on a machine that
     # cannot run Docker at all.
@@ -1147,71 +1222,132 @@ Add-ActionButton '1. Install Docker Desktop' {
         return
     }
 
-    if (Test-DockerInstalled) {
+    $needWsl    = -not (Test-WslReady)
+    $needDocker = -not (Test-DockerInstalled)
+
+    if (-not $needWsl -and -not $needDocker) {
         Clear-Console
-        Add-Line '==> Docker check' $ColAccent
+        Add-Line '==> Prerequisites' $ColAccent
         Add-Line ''
-        Add-Line "[ok] Docker Desktop is already installed." $ColOk
+        Add-Line '[ok] WSL is installed and enabled.' $ColOk
+        Add-Line '[ok] Docker Desktop is already installed.' $ColOk
         $exe = Find-DockerDesktop
         if ($exe) { Add-Line "     $exe" $ColMuted }
-        Set-Banner 'VERIFIED - Docker is already installed. Go to step 2.' 'ok'
+        Set-Banner 'VERIFIED - WSL and Docker are already installed. Go to step 2.' 'ok'
         return
     }
 
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        [System.Windows.Forms.MessageBox]::Show(
-            "winget is not available on this machine, so Docker cannot be installed automatically.`n`nDownload Docker Desktop manually from docker.com, install it, then come back and press step 2.",
-            'Install manually', 'OK', 'Information') | Out-Null
-        Start-Process 'https://www.docker.com/products/docker-desktop/'
-        Set-Banner 'Opened the Docker download page in your browser.' 'warn'
-        return
-    }
+    $todo = @()
+    if ($needWsl)    { $todo += "  - WSL (Windows Subsystem for Linux), from Microsoft. Docker runs on it." }
+    if ($needDocker) { $todo += "  - Docker Desktop, from Docker Inc. - about 600 MB. Docker Desktop has its`n    own licence terms; larger businesses may need a paid subscription." }
+    $msg = "This will download and install:`n`n" + ($todo -join "`n") + @"
 
-    $msg = @"
-This will install Docker Desktop on this computer.
 
-  - It is downloaded by winget from Microsoft's package repository.
-  - Docker Desktop is made by Docker, Inc. and has its own licence terms.
-    Larger businesses may require a paid subscription.
-  - Continuing accepts the winget package agreements on your behalf.
   - Windows will ask for administrator permission.
-  - A restart may be required before Docker will run.
+  - Installs use winget; if that is missing or fails, the installer is
+    downloaded straight from the vendor and its signature is checked.
+  - Continuing accepts the winget package agreements on your behalf.
+  - A restart of Windows will probably be needed afterwards.
 
-Install Docker Desktop now?
+Continue?
 "@
-    $r = [System.Windows.Forms.MessageBox]::Show($msg, 'Install Docker Desktop', 'YesNo', 'Question', 'Button2')
+    $r = [System.Windows.Forms.MessageBox]::Show($msg, 'Install prerequisites', 'YesNo', 'Question', 'Button2')
     if ($r -ne 'Yes') { Set-Banner 'Cancelled - nothing was installed.' 'idle'; return }
 
     Set-ButtonsEnabled $false
     Clear-Console
-    Add-Line '==> Installing Docker Desktop' $ColAccent
-    Add-Line 'This downloads several hundred MB and can take a while.' $ColMuted
-    Add-Line ''
-    Set-Banner 'Installing Docker Desktop...' 'busy'
-    try {
-        $p = Start-Process winget.exe -PassThru -Wait -ArgumentList @(
-            'install', '-e', '--id', 'Docker.DockerDesktop',
-            '--accept-package-agreements', '--accept-source-agreements')
-        Add-Line "winget finished with exit code $($p.ExitCode)"
-    } catch {
-        Add-Line "Install failed: $($_.Exception.Message)" $ColErr
+    $rebootNeeded = $false
+
+    # ---- WSL ----------------------------------------------------------------
+    if ($needWsl) {
+        Add-Line '==> Installing WSL' $ColAccent
+        Add-Line 'A console window shows progress. Approve the administrator prompt.' $ColMuted
+        Set-Banner 'Installing WSL...' 'busy'
+        try {
+            # --no-distribution: Docker brings its own Linux; installing Ubuntu
+            # as well would only cost time and disk.
+            $p = Start-Process wsl.exe -Verb RunAs -PassThru -ArgumentList @('--install', '--no-distribution')
+            $code = Wait-ProcessResponsive $p
+            Add-Line "wsl --install finished with exit code $code"
+        } catch {
+            Add-Line "[x] WSL install did not run: $($_.Exception.Message)" $ColErr
+        }
+        if (Test-WslReady) {
+            Add-Line '[ok] WSL is ready.' $ColOk
+        } else {
+            # Normal on first install: the Windows features only switch on
+            # after a restart, and until then 'wsl --status' keeps failing.
+            Add-Line '[!]  WSL is installed but needs a restart of Windows to switch on.' $ColWarn
+            $rebootNeeded = $true
+        }
+        Add-Line ''
     }
 
-    Add-Line ''
+    # ---- Docker -------------------------------------------------------------
+    if ($needDocker) {
+        Add-Line '==> Installing Docker Desktop' $ColAccent
+        Add-Line 'This downloads about 600 MB and can take a while.' $ColMuted
+        Set-Banner 'Installing Docker Desktop...' 'busy'
+
+        if (Test-WingetUsable) {
+            try {
+                $p = Start-Process winget.exe -PassThru -ArgumentList @(
+                    'install', '-e', '--id', 'Docker.DockerDesktop',
+                    '--accept-package-agreements', '--accept-source-agreements')
+                $code = Wait-ProcessResponsive $p
+                Add-Line "winget finished with exit code $code"
+            } catch { Add-Line "winget failed: $($_.Exception.Message)" $ColWarn }
+            Update-SessionPath
+        } else {
+            Add-Line '[!]  winget is not available on this PC.' $ColWarn
+        }
+
+        if (-not (Test-DockerInstalled)) {
+            Add-Line 'Falling back to the official installer from docker.com.' $ColMuted
+            $inst = Get-VerifiedInstaller -Url 'https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe' `
+                        -FileName 'DockerDesktopInstaller.exe' -SignerPattern '^CN=Docker Inc,' -Vendor 'Docker Inc'
+            if ($inst) {
+                Add-Line 'Running the installer. Approve the administrator prompt.' $ColMuted
+                try {
+                    # No --accept-license: Docker Desktop shows its own licence
+                    # on first start, so the person reads and accepts it there.
+                    $p = Start-Process $inst -Verb RunAs -PassThru -ArgumentList @('install', '--quiet', '--backend=wsl-2')
+                    $code = Wait-ProcessResponsive $p
+                    Add-Line "Docker installer finished with exit code $code"
+                } catch { Add-Line "[x] Installer did not run: $($_.Exception.Message)" $ColErr }
+                Remove-Item $inst -Force -ErrorAction SilentlyContinue
+                Update-SessionPath
+            }
+        }
+        Add-Line ''
+    }
+
+    # ---- verify -------------------------------------------------------------
     Add-Line 'Verifying...' $ColAccent
-    if (Test-DockerInstalled) {
-        Add-Line '[ok] Docker Desktop is now installed.' $ColOk
+    $dockerOk = Test-DockerInstalled
+    if ($dockerOk) { Add-Line '[ok] Docker Desktop is installed.' $ColOk }
+    else           { Add-Line '[x] Docker Desktop is still not detected.' $ColErr }
+
+    if (-not $dockerOk) {
+        Set-Banner 'NOT APPLIED - Docker was not installed. See the output above.' 'fail'
+    } elseif ($rebootNeeded) {
+        Set-Banner 'VERIFIED - installed. Restart Windows, then reopen this and press step 2.' 'ok'
+        Add-Line ''
+        Add-Line 'Next: restart Windows. Then open "OpenTAKServer Manager" from your' $ColWarn
+        Add-Line 'Desktop and press "2. Start Docker Desktop".' $ColWarn
+        $rb = [System.Windows.Forms.MessageBox]::Show(
+            "WSL and Docker are installed, but Windows needs a restart before Docker can run.`n`nAfter restarting, open 'OpenTAKServer Manager' from your Desktop and press step 2.`n`nRestart now?",
+            'Restart required', 'YesNo', 'Question', 'Button2')
+        if ($rb -eq 'Yes') { Restart-Computer -Force }
+    } else {
         Add-Line ''
         Add-Line 'Next: press "2. Start Docker Desktop".' $ColMuted
-        Add-Line 'If it will not start, restart Windows first - Docker needs WSL 2,' $ColMuted
-        Add-Line 'which usually requires a reboot after installation.' $ColMuted
-        Set-Banner 'VERIFIED - Docker Desktop installed. Now press step 2.' 'ok'
-    } else {
-        Add-Line '[x] Docker still is not detected.' $ColErr
-        Set-Banner 'NOT APPLIED - Docker was not installed. You may need to restart Windows.' 'fail'
+        Add-Line 'If it will not start, restart Windows and try again.' $ColMuted
+        Set-Banner 'VERIFIED - prerequisites installed. Now press step 2.' 'ok'
     }
+    Update-Status
     Set-ButtonsEnabled $true
-} 'Installs Docker Desktop using winget'
+} 'Installs WSL and Docker Desktop - winget first, direct download as fallback'
 
 Add-ActionButton '2. Start Docker Desktop' {
     Set-ButtonsEnabled $false
@@ -1236,17 +1372,27 @@ Add-ActionButton '2. Start Docker Desktop' {
     }
 
     Add-Line "Launching $exe" $ColMuted
-    Add-Line 'Waiting for the engine to come up (up to 3 minutes)...' $ColMuted
-    Set-Banner 'Starting Docker Desktop...' 'busy'
+    Add-Line 'Waiting for the engine to come up (up to 5 minutes)...' $ColMuted
+    Add-Line ''
+    Add-Line 'The first time, Docker Desktop opens its own window and asks you to' $ColWarn
+    Add-Line 'accept its licence agreement, then offers a sign-in. Accept the' $ColWarn
+    Add-Line 'agreement; signing in is optional - choose "Skip" or "Continue without' $ColWarn
+    Add-Line 'signing in". This keeps waiting while you do.' $ColWarn
+    Set-Banner 'Starting Docker Desktop - accept its licence if it asks...' 'busy'
     try { Start-Process $exe | Out-Null } catch { Add-Line "Could not launch: $($_.Exception.Message)" $ColErr }
 
-    if (Wait-ForDockerEngine -TimeoutSec 180) {
+    if (Wait-ForDockerEngine -TimeoutSec 300) {
+        Add-Line ''
         Add-Line '[ok] The Docker engine is running.' $ColOk
         Set-Banner 'VERIFIED - Docker is running. Now press step 3.' 'ok'
     } else {
-        Add-Line '[x] Docker did not come up within 3 minutes.' $ColErr
-        Add-Line '    Open Docker Desktop yourself and complete any first-run prompts,' $ColMuted
+        Add-Line ''
+        Add-Line '[x] Docker did not come up within 5 minutes.' $ColErr
+        Add-Line '    Look at the Docker Desktop window and complete any prompts there,' $ColMuted
         Add-Line '    then press this button again.' $ColMuted
+        Add-Line ''
+        Add-Line '    If it said "An unexpected error occurred", or it asks to update WSL,' $ColMuted
+        Add-Line '    restart Windows and try again - see docs\TROUBLESHOOTING.md.' $ColMuted
         Set-Banner 'NOT APPLIED - the Docker engine is not responding yet.' 'fail'
     }
     Update-Status
@@ -1403,7 +1549,7 @@ reach it.
 
 Free for personal use (up to 100 devices).
 
-Install it now with winget? Windows will ask for permission.
+Install it now? Windows will ask for administrator permission.
 "@
         $r = [System.Windows.Forms.MessageBox]::Show($msg, 'Install Tailscale', 'YesNo', 'Question')
         if ($r -ne 'Yes') { Set-Banner 'Cancelled - nothing was installed.' 'idle'; return }
@@ -1412,25 +1558,65 @@ Install it now with winget? Windows will ask for permission.
         Clear-Console
         Add-Line '==> Installing Tailscale' $ColAccent
         Set-Banner 'Installing Tailscale...' 'busy'
-        try {
-            $p = Start-Process winget.exe -PassThru -Wait -ArgumentList @(
-                'install', '-e', '--id', 'Tailscale.Tailscale',
-                '--accept-package-agreements', '--accept-source-agreements')
-            Add-Line "winget finished with exit code $($p.ExitCode)"
-        } catch { Add-Line "Install failed: $($_.Exception.Message)" $ColErr }
+        $tsPath = "$env:ProgramFiles\Tailscale\tailscale.exe"
 
-        $ts = @("$env:ProgramFiles\Tailscale\tailscale.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (Test-WingetUsable) {
+            try {
+                $p = Start-Process winget.exe -PassThru -ArgumentList @(
+                    'install', '-e', '--id', 'Tailscale.Tailscale',
+                    '--accept-package-agreements', '--accept-source-agreements')
+                $code = Wait-ProcessResponsive $p
+                Add-Line "winget finished with exit code $code"
+            } catch { Add-Line "winget failed: $($_.Exception.Message)" $ColWarn }
+        } else {
+            Add-Line '[!]  winget is not available on this PC.' $ColWarn
+        }
+
+        if (-not (Test-Path $tsPath)) {
+            Add-Line 'Falling back to the official installer from tailscale.com.' $ColMuted
+            $msi = Get-VerifiedInstaller -Url 'https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi' `
+                       -FileName 'tailscale-setup.msi' -SignerPattern '^CN=Tailscale Inc\.,' -Vendor 'Tailscale Inc.'
+            if ($msi) {
+                try {
+                    $p = Start-Process msiexec.exe -Verb RunAs -PassThru -ArgumentList @('/i', "`"$msi`"", '/passive', '/norestart')
+                    $code = Wait-ProcessResponsive $p
+                    Add-Line "Tailscale installer finished with exit code $code"
+                } catch { Add-Line "[x] Installer did not run: $($_.Exception.Message)" $ColErr }
+                Remove-Item $msi -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        $ts = @($tsPath) | Where-Object { Test-Path $_ } | Select-Object -First 1
         if ($ts) {
             Add-Line ''
             Add-Line '[ok] Tailscale installed.' $ColOk
-            Add-Line '     Now open Tailscale from the system tray and sign in,' $ColMuted
-            Add-Line '     then press this button again.' $ColMuted
+            # The tray app is what shows the sign-in page on first run.
+            $ipn = Join-Path (Split-Path $ts) 'tailscale-ipn.exe'
+            if (Test-Path $ipn) { Start-Process $ipn -ErrorAction SilentlyContinue }
+            Add-Line '     A Tailscale sign-in page opens in your browser (or click the' $ColMuted
+            Add-Line '     Tailscale icon in the system tray, then "Log in").' $ColMuted
+            Add-Line '     Sign in, then press this button again.' $ColMuted
             Set-Banner 'VERIFIED - installed. Sign in to Tailscale, then press this again.' 'ok'
         } else {
             Add-Line '[x] Tailscale still not detected.' $ColErr
             Set-Banner 'NOT APPLIED - Tailscale was not installed.' 'fail'
         }
         Set-ButtonsEnabled $true
+        return
+    }
+
+    # Installed but not signed in: open the sign-in rather than just failing.
+    $state = $null
+    try { $state = ((& $ts status --json 2>$null | Out-String) | ConvertFrom-Json).BackendState } catch { }
+    if ($state -and $state -ne 'Running') {
+        $ipn = Join-Path (Split-Path $ts) 'tailscale-ipn.exe'
+        # Not 'tailscale up': it blocks until the login completes, which would
+        # freeze this window. The tray app drives the same login without that.
+        if (Test-Path $ipn) { Start-Process $ipn -ErrorAction SilentlyContinue }
+        [System.Windows.Forms.MessageBox]::Show(
+            "Tailscale is installed but not connected (state: $state).`n`nClick the Tailscale icon in the system tray (bottom-right, near the clock - it may be under the ^ arrow) and choose 'Log in' or 'Connect', then finish signing in in your browser.`n`nThen press 'Use Tailscale (no ports)' again.",
+            'Sign in to Tailscale', 'OK', 'Information') | Out-Null
+        Set-Banner 'Sign in to Tailscale, then press this again.' 'warn'
         return
     }
 

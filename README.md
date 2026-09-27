@@ -74,23 +74,46 @@ Both `.cmd` files also clear the mark themselves, so step 2 is belt-and-braces
 | | |
 |---|---|
 | **0. Check This PC** | Confirms this machine *can* run Docker: Windows version, hardware virtualization, WSL, memory, disk. |
-| **1. Install Docker Desktop** | Installs Docker via winget, if you don't already have it. Skips itself if you do. |
+| **1. Install WSL + Docker** | Installs WSL and Docker Desktop for you — whichever is missing. Skips itself if both are there. |
 | **2. Start Docker Desktop** | Launches Docker and waits for its engine to come up. |
 | **3. Build and Install Server** | Generates secure passwords, detects your network address, downloads the images, builds, and starts everything. |
-| **4. Port Forwarding Help** | Only if you want internet access. Builds a prompt describing your router, ISP and exact ports, to paste into Claude or ChatGPT. |
+| **4. Connect a TAK Client** | The exact ATAK settings, the trust store, and which accounts can enrol. |
+| **5. Port Forwarding Help** | Only if you want internet access. Builds a prompt describing your router, ISP and exact ports, to paste into Claude or ChatGPT. |
 
-Step 0 is worth the ten seconds. The two things that stop a Docker install
-cold — **hardware virtualization disabled in BIOS** and **WSL not enabled** —
-are invisible until the install fails, and the first one can only be fixed from
-your firmware setup, not from Windows.
+Step 0 is worth the ten seconds. The one thing no installer can fix —
+**hardware virtualization disabled in BIOS** — is invisible until Docker fails
+to start, and can only be switched on from your firmware setup, not from
+Windows.
+
+### Dependencies are installed for you
+
+You don't download anything by hand. Step 1 fetches what is missing:
+
+| Dependency | How it is installed |
+|---|---|
+| **WSL 2** | `wsl --install --no-distribution`, run as administrator |
+| **Docker Desktop** | `winget`; if winget is missing or fails, the official installer is downloaded from docker.com |
+| **Tailscale** *(optional)* | `winget`; if that fails, the official MSI from tailscale.com |
+
+Anything downloaded directly is checked for a valid digital signature from its
+vendor (Docker Inc / Tailscale Inc.) before it runs, and refused otherwise.
+Windows asks for administrator permission for each install.
+
+Everything else — PowerShell 5.1, `curl.exe`, the forms library the manager is
+built with — ships with Windows 10 and 11.
 
 Each step checks its own result and turns the bar at the bottom green
 (**VERIFIED**) or red (**NOT APPLIED**) with the reason, and the window tells
 you which button to press next. The first run takes several minutes, mostly
 downloading.
 
-You may need to restart Windows after installing Docker — it uses WSL 2, which
-usually requires a reboot. Reopen the manager afterwards and continue at step 2.
+**Expect one restart.** On a machine that has never had WSL, Windows must
+restart before Docker can run. Step 1 offers to do it for you; afterwards open
+**OpenTAKServer Manager** from your Desktop and continue at step 2.
+
+**The first time Docker Desktop starts** it shows its own window asking you to
+accept its licence agreement, then offers a sign-in. Accept the agreement; the
+sign-in is optional — skip it. Step 2 waits while you do.
 
 ### Prefer the command line?
 
