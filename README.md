@@ -197,7 +197,7 @@ components.
 | `.\ots.ps1 set-address` | Update the server address after changing network |
 | `.\ots.ps1 backup` | Back up the database and all server data |
 | `.\ots.ps1 restore <folder>` | Restore from a backup |
-| `.\ots.ps1 update` | Pull newer images and restart |
+| `.\ots.ps1 update` | Update this package and the images, then restart (keeps `.env` and data) |
 | `.\ots.ps1 config` | Edit `config.yml` in Notepad, then restart |
 | `.\ots.ps1 set-admin-password` | Change the administrator password |
 | `.\ots.ps1 tls-only on` | Choose which unencrypted ports stay reachable |
@@ -421,15 +421,30 @@ and the backup cannot be restored without it.
 
 ## Upgrading
 
+Press **Backup Now**, then **Update** in the manager. Or:
+
 ```bash
 .\ots.ps1 backup
 .\ots.ps1 update
 ```
 
-`update` pulls the newest build of the pinned version. To move to a different
-OpenTAKServer release, edit `OTS_VERSION` in `.env` first — see the
+`update` does everything in one go:
+
+1. Checks GitHub for a newer release of **this package** — the control panel,
+   scripts and web server configuration — and if there is one, downloads it
+   over the old files. Your `.env`, backups, users, certificates and all data
+   are kept.
+2. Pulls the newest server images and rebuilds the web server.
+3. Restarts, and the manager offers to reopen itself on the new version.
+
+Only `.env` is preserved as-is — edits to other files in the folder (such as
+`docker-compose.yml`) are replaced. Put customisations in `.env`.
+
+`update` pulls the newest build of the pinned OpenTAKServer version. To move to
+a different OpenTAKServer release, edit `OTS_VERSION` in `.env` first — see the
 [release list](https://github.com/brian7704/OpenTAKServer/releases). Database
-migrations run automatically on the next start.
+migrations run automatically on the next start. `.\ots.ps1 update images`
+skips the package check and only refreshes images.
 
 ---
 

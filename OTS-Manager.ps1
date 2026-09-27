@@ -1565,13 +1565,32 @@ Add-ActionButton 'Backup Now' {
 } 'Writes a timestamped backup into the backups folder'
 
 Add-ActionButton 'Update' {
+    $verFile = Join-Path $Root 'VERSION'
+    $before = if (Test-Path $verFile) { (Get-Content $verFile -Raw).Trim() } else { 'unknown' }
+
     $r = [System.Windows.Forms.MessageBox]::Show(
-        "Pull newer images and restart?`n`nTake a backup first if you have data you care about.",
+        "Update everything to the newest release?`n`n  - downloads the newest version of this control panel and its scripts`n  - pulls newer server images and rebuilds the web server`n  - restarts the server`n`nYour settings (.env), users, certificates and data are kept.`nInstalled now: $before`n`nTake a backup first if you have data you care about.",
         'Update', 'YesNo', 'Question')
-    if ($r -eq 'Yes') {
-        Invoke-OtsCommand -Title 'Update to the newest images' -CommandArgs @('update') -Verify $VerifyRunning | Out-Null
+    if ($r -ne 'Yes') { Set-Banner 'Cancelled - nothing was updated.' 'idle'; return }
+
+    $ok = [bool](Invoke-OtsCommand -Title 'Update to the newest release' -CommandArgs @('update') -Verify $VerifyRunning |
+                 Select-Object -Last 1)
+
+    # The new files are on disk, but this window is still running the old
+    # code. Offer to reopen it so new buttons and fixes appear.
+    $after = if (Test-Path $verFile) { (Get-Content $verFile -Raw).Trim() } else { 'unknown' }
+    if ($after -ne $before) {
+        $msg = "Updated from $before to $after.`n`nReopen the control panel now to load the new version?"
+        if (-not $ok) { $msg = "The package was updated to $after, but the server did not come back healthy - see the output.`n`nReopen the control panel now to load the new version?" }
+        $rr = [System.Windows.Forms.MessageBox]::Show($msg, 'Update installed', 'YesNo', 'Question')
+        if ($rr -eq 'Yes') {
+            Start-Process -FilePath (Join-Path $Root 'OTS Manager.cmd') -WorkingDirectory $Root
+            $form.Close()
+        } else {
+            Set-Banner "Updated to $after. Close and reopen the control panel to load it." 'warn'
+        }
     }
-} 'Pull newer container images and restart'
+} 'Update this control panel, its scripts and the server images - keeps all settings and data'
 
 Add-ActionButton 'Edit .env' {
     $p = Join-Path $Root '.env'

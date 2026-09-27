@@ -60,13 +60,15 @@ if ($InstallPath -match 'OneDrive|Dropbox|Google Drive') {
 Step "Finding the latest release"
 
 $zipUrl = $null
+$tag = $null
 try {
     $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" `
                              -Headers @{ 'User-Agent' = 'OTS-Docker-Installer' }
     $asset = $rel.assets | Where-Object { $_.name -like '*.zip' } | Select-Object -First 1
     if ($asset) {
         $zipUrl = $asset.browser_download_url
-        Ok "Release $($rel.tag_name)"
+        $tag = $rel.tag_name
+        Ok "Release $tag"
     }
 } catch {
     Warn "No published release found - falling back to the current main branch."
@@ -124,6 +126,13 @@ if ($savedEnv) {
     [System.IO.File]::WriteAllText($existingEnv, $savedEnv, (New-Object System.Text.UTF8Encoding($false)))
     Ok "Kept your existing .env"
 }
+
+# Releases ship a VERSION file; write it anyway so 'Update' in the manager
+# knows what is installed. A main-branch fallback has no version, so any
+# release will count as newer.
+$verPath = Join-Path $InstallPath 'VERSION'
+if ($tag) { Set-Content -Path $verPath -Value $tag -Encoding ascii }
+else      { Remove-Item $verPath -Force -ErrorAction SilentlyContinue }
 Ok "Files installed"
 
 # Windows tags anything downloaded from the internet, which makes PowerShell

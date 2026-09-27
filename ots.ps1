@@ -25,6 +25,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot
 
 $ProjectName = 'opentakserver'
+$Repo        = 'District47/OTS-Docker'
 $BackupDir   = Join-Path $PSScriptRoot 'backups'
 
 # Set by the GUI wrapper, which asks for confirmation in its own dialog before
@@ -315,7 +316,8 @@ switch ($Command.ToLower()) {
         Write-Host "                       (no argument = detect it automatically)"
         Write-Host ""
         Write-Host "  Maintenance" -ForegroundColor Cyan
-        Write-Host "    update             Pull newer images and restart"
+        Write-Host "    update             Update this package and the images, then restart"
+        Write-Host "                       (keeps .env and all data; 'update images' = images only)"
         Write-Host "    backup             Back up the database and server data"
         Write-Host "    restore <file>     Restore from a backup folder"
         Write-Host "    config             Edit config.yml in Notepad, then restart"
@@ -537,7 +539,73 @@ switch ($Command.ToLower()) {
     # -----------------------------------------------------------------------
     'update' {
         Assert-Docker; Assert-Env
-        Write-Warn "Take a backup first if you have data you care about: .\ots.ps1 backup"
+        $imagesOnly = ($Arguments -and $Arguments[0] -eq 'images')
+
+        if (-not $imagesOnly) {
+            Write-Warn "Take a backup first if you have data you care about: .\ots.ps1 backup"
+            Write-Step "Checking for a newer version of this package"
+            $appUpdated = $false
+
+            # A developer's git clone must never be overwritten with a ZIP.
+            if (Test-Path (Join-Path $PSScriptRoot '.git')) {
+                Write-Warn "This folder is a git checkout - skipping. Update it with 'git pull'."
+            } else {
+                $verFile = Join-Path $PSScriptRoot 'VERSION'
+                $current = if (Test-Path $verFile) { (Get-Content $verFile -Raw).Trim() } else { 'unknown' }
+                $rel = $null
+                try {
+                    $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" `
+                                             -Headers @{ 'User-Agent' = 'OTS-Docker-Updater' } -TimeoutSec 20
+                } catch {
+                    Write-Warn "Could not reach GitHub ($($_.Exception.Message)) - updating images only."
+                }
+                $asset = if ($rel) { $rel.assets | Where-Object { $_.name -like '*.zip' } | Select-Object -First 1 }
+
+                if ($rel -and $rel.tag_name -eq $current) {
+                    Write-Ok "Already on the newest version ($current)"
+                } elseif ($asset) {
+                    Write-Host "    Installed: $current    Newest: $($rel.tag_name)"
+                    $tmpZip = Join-Path $env:TEMP "ots-update-$(Get-Random).zip"
+                    $tmpDir = Join-Path $env:TEMP "ots-update-$(Get-Random)"
+                    try {
+                        $ProgressPreference = 'SilentlyContinue'   # the 5.1 progress bar slows downloads badly
+                        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tmpZip -UseBasicParsing
+                        Expand-Archive -Path $tmpZip -DestinationPath $tmpDir -Force
+                        $src = Get-ChildItem $tmpDir -Recurse -Filter 'docker-compose.yml' | Select-Object -First 1
+                        if (-not $src -or -not (Test-Path (Join-Path $src.DirectoryName 'ots.ps1'))) {
+                            throw "the download does not look like OTS-Docker"
+                        }
+                        # .env is never in a release, but skip it explicitly: it
+                        # holds the database password, and losing it makes the
+                        # existing data unreadable.
+                        Get-ChildItem $src.DirectoryName -Force | Where-Object { $_.Name -ne '.env' } |
+                            Copy-Item -Destination $PSScriptRoot -Recurse -Force
+                        Get-ChildItem $PSScriptRoot -Recurse -File -ErrorAction SilentlyContinue |
+                            Unblock-File -ErrorAction SilentlyContinue
+                        Set-Content -Path $verFile -Value $rel.tag_name -Encoding ascii
+                        Write-Ok "Updated to $($rel.tag_name) - your .env and data are unchanged"
+                        $appUpdated = $true
+                    } catch {
+                        Write-Err "Package update failed: $($_.Exception.Message)"
+                        Write-Warn "Nothing was changed by that step - continuing with images only."
+                    } finally {
+                        Remove-Item $tmpZip -Force -ErrorAction SilentlyContinue
+                        Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+
+            if ($appUpdated) {
+                # Hand over to the NEW ots.ps1 for the rest, so fixes to the
+                # update steps themselves take effect in this same run.
+                Invoke-Native {
+                    & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+                        -File (Join-Path $PSScriptRoot 'ots.ps1') update images
+                }
+                exit $LASTEXITCODE
+            }
+        }
+
         Write-Step "Pulling newer images"
         # The nginx image is built locally, so it must be skipped here.
         $profileArgs = Get-ActiveProfileArgs

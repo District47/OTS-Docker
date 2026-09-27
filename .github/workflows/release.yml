@@ -53,6 +53,8 @@ jobs:
           # Ship only what an end user needs - no CI config, no git metadata.
           rsync -a --exclude '.git' --exclude '.github' --exclude 'dist' \
                    --exclude '.env' --exclude 'backups' ./ dist/OTS-Docker/
+          # 'ots.ps1 update' compares this with the newest release.
+          echo "${VERSION}" > dist/OTS-Docker/VERSION
           cd dist
           zip -r "OTS-Docker-${VERSION}.zip" OTS-Docker
           ls -la
