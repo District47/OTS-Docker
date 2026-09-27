@@ -32,6 +32,19 @@ x-ots-env: &ots-env
 
 x-ots-image: &ots-image "ghcr.io/brian7704/opentakserver:${OTS_VERSION:-1.7.13}"
 
+# Every OpenTAKServer container starts through patches/start.sh, which fixes
+# an upstream bug before the service runs: the Socket.IO message queue URL is
+# built without RabbitMQ credentials, so it logs in as "guest", is refused,
+# and the thread serving each TAK client crashes every ~40 seconds - ATAK
+# shows "data reception timeout". See patches/apply.py.
+#
+# The containers start as root only so the patch can edit code that some
+# images install read-only; start.sh drops to the "ots" user before running
+# the service.
+x-ots-patched: &ots-patched
+  user: root
+  entrypoint: ["/bin/sh", "/ots-patches/start.sh"]
+
 services:
 
   # -------------------------------------------------------------------------
@@ -87,14 +100,17 @@ services:
   # Creates the CA and runs database migrations automatically on startup.
   # -------------------------------------------------------------------------
   ots:
+    <<: *ots-patched
     image: *ots-image
     container_name: opentakserver
     hostname: opentakserver
     restart: unless-stopped
     tty: true
+    command: ["opentakserver"]
     environment: *ots-env
     volumes:
       - ots_data:/app/ots
+      - ./patches:/ots-patches:ro
     networks:
       default:
         aliases: [opentakserver]
@@ -116,15 +132,17 @@ services:
   # Parses incoming Cursor-on-Target messages off the RabbitMQ queue.
   # -------------------------------------------------------------------------
   ots_cot_parser:
+    <<: *ots-patched
     image: "ghcr.io/brian7704/ots_cot_parser:${OTS_VERSION:-1.7.13}"
     container_name: ots-cot-parser
     hostname: ots-cot-parser
     restart: unless-stopped
     tty: true
-    command: python3 /app/venv/bin/cot_parser
+    command: ["/app/venv/bin/cot_parser"]
     environment: *ots-env
     volumes:
       - ots_data:/app/ots
+      - ./patches:/ots-patches:ro
     healthcheck:
       disable: true
     depends_on:
@@ -135,17 +153,19 @@ services:
   # CoT streaming over plain TCP (no certificate required).
   # -------------------------------------------------------------------------
   ots_eud_handler:
+    <<: *ots-patched
     image: "ghcr.io/brian7704/ots_eud_handler:${OTS_VERSION:-1.7.13}"
     container_name: ots-eud-handler
     hostname: ots-eud-handler
     restart: unless-stopped
     tty: true
-    command: python3 /app/venv/bin/eud_handler
+    command: ["python3", "/app/venv/bin/eud_handler"]
     environment: *ots-env
     ports:
       - "${OTS_PLAINTEXT_BIND:-0.0.0.0}:${OTS_TCP_COT_PORT:-8088}:8088"
     volumes:
       - ots_data:/app/ots
+      - ./patches:/ots-patches:ro
     healthcheck:
       disable: true
     depends_on:
@@ -157,17 +177,19 @@ services:
   # WinTAK and iTAK use for an authenticated connection.
   # -------------------------------------------------------------------------
   ots_eud_handler_ssl:
+    <<: *ots-patched
     image: "ghcr.io/brian7704/ots_eud_handler_ssl:${OTS_VERSION:-1.7.13}"
     container_name: ots-eud-handler-ssl
     hostname: ots-eud-handler-ssl
     restart: unless-stopped
     tty: true
-    command: python3 /app/venv/bin/eud_handler --ssl
+    command: ["python3", "/app/venv/bin/eud_handler", "--ssl"]
     environment: *ots-env
     ports:
       - "${OTS_SSL_COT_PORT:-8089}:8089"
     volumes:
       - ots_data:/app/ots
+      - ./patches:/ots-patches:ro
     healthcheck:
       disable: true
     depends_on:
@@ -194,12 +216,14 @@ services:
     profiles: ["udp"]
     restart: unless-stopped
     tty: true
-    command: python3 /app/venv/bin/eud_handler --udp
+    <<: *ots-patched
+    command: ["python3", "/app/venv/bin/eud_handler", "--udp"]
     environment: *ots-env
     ports:
       - "${OTS_UDP_COT_PORT:-8087}:8087/udp"
     volumes:
       - ots_data:/app/ots
+      - ./patches:/ots-patches:ro
     healthcheck:
       disable: true
     depends_on:

@@ -255,6 +255,24 @@ If step 3 is the one that fails, it is Windows Firewall or network isolation:
 * **Client isolation** — many guest and public Wi-Fi networks stop devices from
   talking to each other at all. Nothing on the server can fix that.
 
+### ATAK keeps showing "data reception timeout" and reconnecting
+
+Fixed in v1.5.2 — press **Update** in the manager. The cause was an
+OpenTAKServer bug: the connection it uses for web-UI live updates was built
+without the RabbitMQ username and password, so it tried to log in as `guest`,
+was refused, and the thread serving each TAK client crashed about every 40
+seconds. This stack now patches that at container start (see
+`patches/apply.py`). Check it is applied:
+
+```bash
+docker compose logs ots_eud_handler_ssl | findstr ots-patches
+```
+
+You should see `RabbitMQ credentials added…` lines. If the timeouts continue
+after that, the usual remaining causes are on the phone or network: Android
+battery optimisation putting ATAK to sleep (exempt ATAK in the battery
+settings), or a flaky mobile connection.
+
 ### The browser warns about the certificate
 
 Expected on a self-signed install. OpenTAKServer issues its certificate for the
