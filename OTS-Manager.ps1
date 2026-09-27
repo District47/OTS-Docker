@@ -1521,6 +1521,11 @@ Add-ActionButton '5. Port Forwarding Help' {
     Set-Banner 'Prompt builder closed. Forward the ports, then use "Check Internet Setup".' 'idle'
 } 'Builds a prompt describing your router and ports for Claude or ChatGPT'
 
+Add-ActionButton '6. Support Future Projects' {
+    Start-Process 'https://buymeacoffee.com/district47'
+    Set-Banner 'Opened District47 on Buy Me a Coffee in your browser - thank you!' 'idle'
+} 'Buy District47 a coffee - supports this and future projects'
+
 # ---- Server ---------------------------------------------------------------
 Add-SectionLabel 'Server'
 

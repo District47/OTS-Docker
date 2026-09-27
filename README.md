@@ -79,6 +79,7 @@ Both `.cmd` files also clear the mark themselves, so step 2 is belt-and-braces
 | **3. Build and Install Server** | Generates secure passwords, detects your network address, downloads the images, builds, and starts everything. |
 | **4. Connect a TAK Client** | The exact ATAK settings — QR code or trust store, whichever your setup needs — and which accounts can enrol. |
 | **5. Port Forwarding Help** | Only if you want internet access. Builds a prompt describing your router, ISP and exact ports, to paste into Claude or ChatGPT. |
+| **6. Support Future Projects** | Opens [District47 on Buy Me a Coffee](https://buymeacoffee.com/district47), if this saved you some time. |
 
 Step 0 is worth the ten seconds. The one thing no installer can fix —
 **hardware virtualization disabled in BIOS** — is invisible until Docker fails
